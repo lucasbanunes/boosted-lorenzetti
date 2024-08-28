@@ -26,7 +26,7 @@ class LztDataset:
         Basename of the dataset files
     label : str, optional
         Dataset label, useful for plotting, by default None
-    
+
     Properties
     ----------
     evt_path : str
@@ -58,6 +58,10 @@ class LztDataset:
         self.path = path
         self.basename = basename
         self.label = label
+
+    def __repr__(self) -> str:
+        repr_str = f'LztDataset(path={self.path}, label={self.label})'
+        return repr_str
 
     @property
     def evt_path(self) -> str:
