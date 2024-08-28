@@ -23,7 +23,7 @@ if __name__ == '__main__':
     args = parse_args()
     file_match = re.compile(r'\.root\.[0-9]*$')
     for path in args.dir_paths:
-        dataset = LztDataset(path)
+        dataset = LztDataset.from_dir(path)
         for directory in FILE_DIRECTORIES:
             dir_path = os.path.join(path, directory)
             if not os.path.exists(dir_path):
