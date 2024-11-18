@@ -1,2 +1,2 @@
 # boosted-lorenzetti
-Repo with analysis codes for boosted decays studies with lorenzetti
+Repo with code for analysing boosted decays with lorenzetti.
