@@ -3,16 +3,17 @@
 # 2024_11_19_18_53_0000000000_jets.sh <n_events> <n_workers>
 # 2024_11_19_18_53_0000000000_jets.sh 100 10
 # This will generate a dataset with 100 events using 10 workers
-
 call_dir=$PWD
-n_workers=$1 && \
-NOV=$2 && \
+NOV=$1 && \
+n_workers=$2 && \
 seed=2137420 && \
-base_dir="${LZT_DATA}/2024_11_19_18_53_0000000000_jets" && \
+base_dir="${LZT_DATA}/2024_11_19_18_53_0000000000_jets"
 if [ -d "$base_dir" ]; then
     echo "Directory $base_dir already exists. Exiting..."
     exit 1
 fi
+lzt_path="${HOME}/workspaces/lorenzetti/lorenzetti" && \
+cd $lzt_path && source setup_envs.sh && source setup.sh && \
 # generate events with pythia
 mkdir -p "${base_dir}/EVT" && cd "${base_dir}/EVT" && \
 echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Started EVT sim" > "${base_dir}/started_EVT.log" && \
