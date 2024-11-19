@@ -1,7 +1,7 @@
 call_dir=$PWD
 NOV=10000 && \
 seed=13443634 && \
-base_dir="/home/lucasbanunes/data/lorenzetti/2024_08_19_21_08_0000000000_zee" && \
+base_dir="${LZT_DATA}/2024_08_19_21_08_0000000000_zee" && \
 # generate events with pythia
 mkdir -p "${base_dir}/EVT" && cd "${base_dir}/EVT" && \
 echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Started EVT sim" > "${base_dir}/started_EVT.log" && \

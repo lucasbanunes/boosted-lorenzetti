@@ -1,13 +1,12 @@
 call_dir=$PWD
 NOV=10000 && \
 seed=108625 && \
-# base_dir="/home/lucas.nunes/data/$(date -d "today" +"%Y_%m_%d_%H_%M_%s")_lorenzetti_single_electron" && \
-base_dir="/home/lucas.nunes/cern_data/lucas.nunes/lorenzetti/2024_08_19_21_18_0000000000_single_electron" && \
-# # generate events with pythia
-# mkdir -p "${base_dir}/EVT" && cd "${base_dir}/EVT" && \
-# echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Started EVT sim" > "${base_dir}/started_EVT.log" && \
-# (prun_evts.py -c "gen_electron.py --pileupAvg 0 --doEtaRanged True --eta_min -2.5 --eta_max 2.5 --energy_min 15 --energy_max 2000 --doPhiRanged True --phi_min -3.14159 --phi_max 3.14159 --nov %NOV --eventNumber %OFFSET -o %OUT -s %SEED" -nt 8 --nov $NOV --seed $seed --novPerJob 200 -o "${base_dir}/EVT/single_electron.EVT.root" |& tee "${base_dir}/single_electron.EVT.log")  && \
-# echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Finished EVT sim" > "${base_dir}/finished_EVT.log" && \
+base_dir="${LZT_DATA}/2024_08_19_21_18_0000000000_single_electron" && \
+# generate events with pythia
+mkdir -p "${base_dir}/EVT" && cd "${base_dir}/EVT" && \
+echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Started EVT sim" > "${base_dir}/started_EVT.log" && \
+(prun_evts.py -c "gen_electron.py --pileupAvg 0 --doEtaRanged True --eta_min -2.5 --eta_max 2.5 --energy_min 15 --energy_max 2000 --doPhiRanged True --phi_min -3.14159 --phi_max 3.14159 --nov %NOV --eventNumber %OFFSET -o %OUT -s %SEED" -nt 8 --nov $NOV --seed $seed --novPerJob 200 -o "${base_dir}/EVT/single_electron.EVT.root" |& tee "${base_dir}/single_electron.EVT.log")  && \
+echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Finished EVT sim" > "${base_dir}/finished_EVT.log" && \
 # generate hits around the truth particle seed
 mkdir -p "${base_dir}/HIT" && cd "${base_dir}/HIT" && \
 echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Started HIT sim" > "${base_dir}/started_HIT.log" && \
