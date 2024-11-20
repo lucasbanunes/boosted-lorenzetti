@@ -2,7 +2,7 @@ import os
 import ROOT
 import glob
 import json
-from hep_utils.root import rdf_to_pandas
+from lzt_utils.root import rdf_to_pandas
 import pandas as pd
 
 FILE_DIRECTORIES = [

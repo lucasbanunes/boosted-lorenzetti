@@ -1,3 +1,8 @@
+from typing import Union, Iterable, Iterator
+import os
+from glob import iglob
+
+
 def open_directories(
         paths: Union[Iterable[str], str],
         file_ext: str,
