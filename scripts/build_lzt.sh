@@ -5,9 +5,9 @@ mkdir -p $logs_dir
 # |& redirects stderr to stdout from the previous command do the stdin of the next command
 # in this case redirects stderr and stdout to tee, which writes to a file and stdout
 lzt_repo="${HOME}/workspaces/lorenzetti/lorenzetti"
-# build_dir=$lzt_repo/build
-# if [ -d "$build_dir" ]; then
-#     rm -r $build_dir
-# fi
+build_dir=$lzt_repo/build
+if [ -d "$build_dir" ] && [ "$1" == "overwrite" ]; then
+    rm -r $build_dir
+fi
 cd $lzt_repo && (make |& tee $log_path) && source setup.sh
 cd $call_dir
