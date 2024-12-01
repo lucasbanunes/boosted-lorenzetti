@@ -15,6 +15,9 @@ def parse_args():
                         help='Lorenzetti datasets path',
                         dest='dir_paths',
                         required=True)
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Dry run mode, does not rename the files',
+                        dest='dry_run')
     return parser.parse_args()
 
 
@@ -39,4 +42,6 @@ if __name__ == '__main__':
                 splitted[-1] = splitted[-2]
                 splitted[-2] = aux
                 new_name = '.'.join(splitted)
-                os.rename(filename, new_name)
+                logging.info(f'{filename} -> {new_name}')
+                if not args.dry_run:
+                    os.rename(filename, new_name)
