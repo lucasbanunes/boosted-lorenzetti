@@ -1,9 +1,10 @@
 import os
 import ROOT
-import glob
 import json
 from lzt_utils.root import rdf_to_pandas
 import pandas as pd
+from pathlib import Path
+from typing import Union
 
 FILE_DIRECTORIES = [
     'EVT',
@@ -41,7 +42,7 @@ class LztDataset:
         Path to the NTUPLE directory
     """
     def __init__(self,
-                 path: str,
+                 path: Union[str, Path],
                  basename: str,
                  label: str = None,
                  **kwargs):
@@ -55,6 +56,8 @@ class LztDataset:
         label : str, optional
             Dataset label, useful for plotting, by default None
         """
+        if isinstance(path, str):
+            self.path = Path(path)
         self.path = path
         self.basename = basename
         self.label = label
@@ -64,24 +67,24 @@ class LztDataset:
         return repr_str
 
     @property
-    def evt_path(self) -> str:
-        return os.path.join(self.path, 'EVT')
+    def evt_path(self) -> Path:
+        return self.path / 'EVT'
 
     @property
-    def hit_path(self) -> str:
-        return os.path.join(self.path, 'HIT')
+    def hit_path(self) -> Path:
+        return self.path / 'HIT'
 
     @property
-    def esd_path(self) -> str:
-        return os.path.join(self.path, 'ESD')
+    def esd_path(self) -> Path:
+        return self.path / 'ESD'
 
     @property
-    def aod_path(self) -> str:
-        return os.path.join(self.path, 'AOD')
+    def aod_path(self) -> Path:
+        return self.path / 'AOD'
 
     @property
-    def ntuple_path(self) -> str:
-        return os.path.join(self.path, 'NTUPLE')
+    def ntuple_path(self) -> Path:
+        return self.path / 'NTUPLE'
 
     def get_ntuple_rdf(self) -> ROOT.RDataFrame:
         """
@@ -92,7 +95,9 @@ class LztDataset:
         ROOT.RDataFrame
             RDataFrame for the ntuple
         """
-        ntuple_files = glob.glob(self.ntuple_path + '/*.root')
+        ntuple_files = [str(filename) for filename
+                        in self.ntuple_path.glob('*.root')]
+        print(f'NTUPLE_FILES: {ntuple_files}')
         rdf = ROOT.RDataFrame("events", ntuple_files)
         return rdf
 
@@ -107,7 +112,7 @@ class LztDataset:
         """
         return rdf_to_pandas(self.get_ntuple_rdf())
 
-    def makedirs(self, directory: str) -> str:
+    def makedirs(self, directory: str) -> Path:
         """
         Create a directory inside the dataset directory
 
@@ -118,12 +123,12 @@ class LztDataset:
 
         Returns
         -------
-        str
+        Path
             Absolute path to the created directory
         """
-        abspath = os.path.join(self.path, directory)
-        os.makedirs(abspath, exist_ok=True)
-        return abspath
+        dir_path = self.path / directory
+        dir_path.mkdir(parents=True, exist_ok=True)
+        return dir_path.resolve()
 
     @classmethod
     def from_dir(cls, path: str):

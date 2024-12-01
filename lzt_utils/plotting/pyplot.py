@@ -2,8 +2,8 @@
 """Utils for plotting with matplotlib.pyplot"""
 from typing import Any, Dict, Optional, Union, Tuple, List
 import matplotlib.pyplot as plt
-from hep_utils.formulas import norm1
-from hep_utils.constants import RINGS_LAYERS
+from ..formulas import norm1
+from ..constants import RINGS_LAYERS
 import pandas as pd
 import numpy as np
 import numpy.typing as npt
