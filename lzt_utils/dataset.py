@@ -4,7 +4,7 @@ import json
 from lzt_utils.root import rdf_to_pandas
 import pandas as pd
 from pathlib import Path
-from typing import Union
+from typing import Iterator, Union
 
 FILE_DIRECTORIES = [
     'EVT',
@@ -41,6 +41,7 @@ class LztDataset:
     ntuple_path : str
         Path to the NTUPLE directory
     """
+
     def __init__(self,
                  path: Union[str, Path],
                  basename: str,
@@ -61,30 +62,59 @@ class LztDataset:
         self.path = path
         self.basename = basename
         self.label = label
+        self.evt_path = self.path / 'EVT'
+        self.hit_path = self.path / 'HIT'
+        self.esd_path = self.path / 'ESD'
+        self.aod_path = self.path / 'AOD'
+        self.ntuple_path = self.path / 'NTUPLE'
+        self.__hit_event_counter = None
 
     def __repr__(self) -> str:
         repr_str = f'LztDataset(path={self.path}, label={self.label})'
         return repr_str
 
     @property
-    def evt_path(self) -> Path:
-        return self.path / 'EVT'
+    def hit_files(self) -> Iterator[Path]:
+        """
+        Iterator over the HIT files
+
+        Returns
+        -------
+        Iterator[Path]
+            Iterator over the HIT files
+        """
+        return self.hit_path.glob('*.root')
 
     @property
-    def hit_path(self) -> Path:
-        return self.path / 'HIT'
+    def hit_event_counter(self) -> int:
+        """
+        Number of completed HIT events
 
-    @property
-    def esd_path(self) -> Path:
-        return self.path / 'ESD'
-
-    @property
-    def aod_path(self) -> Path:
-        return self.path / 'AOD'
-
-    @property
-    def ntuple_path(self) -> Path:
-        return self.path / 'NTUPLE'
+        Returns
+        -------
+        int
+            Number of completed HIT events
+        """
+        if self.__hit_event_counter is None:
+            self.__completed_hit_events = {
+                'Event': 0,
+                'Completed': 0,
+                'Timeout': 0
+            }
+            for hit_file in self.hit_files:
+                with ROOT.TFile(str(hit_file), 'read') as f:
+                    # Extracts the data from the histograms
+                    hist = f.Get("Event/EventCounter")
+                    self.__completed_hit_events['Event'] += \
+                        hist.GetBinContent(1)
+                    self.__completed_hit_events['Completed'] += \
+                        hist.GetBinContent(2)
+                    self.__completed_hit_events['Timeout'] += \
+                        hist.GetBinContent(3)
+            for key in self.__completed_hit_events:
+                self.__completed_hit_events[key] = int(
+                    self.__completed_hit_events[key])
+        return self.__completed_hit_events
 
     def get_ntuple_rdf(self) -> ROOT.RDataFrame:
         """
