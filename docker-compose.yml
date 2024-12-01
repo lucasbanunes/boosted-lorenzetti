@@ -1,0 +1,16 @@
+name: lorenzetti
+services:
+  dev:
+    image: lorenzetti/lorenzetti:latest
+    container_name: dev
+    volumes:
+      - /home/${USERNAME}/data:/root/data/local
+      - /mnt/d/data:/root/data/external
+      - /home/${USERNAME}/workspaces/lorenzetti:/root/workspaces/lorenzetti
+      - /home/${USERNAME}/logs:/root/logs
+    tty: true
+    environment:
+    - LZT_DATA=${LZT_DATA}
+    - PYTHONPATH=${PYTHONPATH}
+    - LZT_REPO=${LZT_REPO}
+    
