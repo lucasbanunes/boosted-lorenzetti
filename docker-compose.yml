@@ -4,8 +4,8 @@ services:
     image: lorenzetti/lorenzetti:latest
     container_name: dev
     volumes:
-      - /home/${USERNAME}/data:/root/data/local
-      - /mnt/d/data:/root/data/external
+      - /home/${USERNAME}/data:/root/data
+      - /mnt/d/data:/root/ext_data
       - /home/${USERNAME}/workspaces/lorenzetti:/root/workspaces/lorenzetti
       - /home/${USERNAME}/logs:/root/logs
     tty: true
