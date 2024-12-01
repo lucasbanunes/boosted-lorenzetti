@@ -4,9 +4,10 @@ n_workers=$2 && \
 seed=34017 && \
 base_dir="${LZT_DATA}/2024_08_22_12_00_0000000000_minibias" && \
 # generate events with pythia
+# The pileupSigma 10 is acteually unknown. Kept the same value as other file
 # mkdir -p "${base_dir}/EVT" && cd "${base_dir}/EVT" && \
 # echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Started EVT sim" > "${base_dir}/started_EVT.log" && \
-# (prun_evts.py -c "gen_minbias.py --pileupAvg 40 --pileupSigma 10 --nov %NOV --eventNumber %OFFSET -o %OUT -s %SEED" -nt $n_workers --nov $NOV --seed $seed --novPerJob 200 -o "${base_dir}/EVT/minibias.EVT.root" |& tee "${base_dir}/minibias.EVT.log")  && \
+# (prun_evts.py -c "gen_minbias.py --pileupAvg 10 --pileupSigma 10 --nov %NOV --eventNumber %OFFSET -o %OUT -s %SEED" -nt $n_workers --nov $NOV --seed $seed --novPerJob 200 -o "${base_dir}/EVT/minibias.EVT.root" |& tee "${base_dir}/minibias.EVT.log")  && \
 # echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Finished EVT sim" > "${base_dir}/finished_EVT.log"
 # # generate hits around the truth particle seed
 # mkdir -p "${base_dir}/HIT" && cd "${base_dir}/HIT" && \

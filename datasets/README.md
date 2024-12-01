@@ -29,17 +29,20 @@ The lorenzetti source code can be seen [here](https://github.com/lorenzetti-hep/
 - Seed: 13443634
 
 ## 2024_08_22_12_00_0000000000_minibias
-- Aimed for 10k samples generated only 1968
-The time for HIT execution on geant was too long and always gave timeout. The EVT files worked fine.
+- Aimed for 10k samples generated only 1968 at the HIT step
+The time for HIT execution on geant was too long and gave timeout a lot of times. The EVT files worked fine.
 - Commit: [333841f7e8254dc3454779fea0882d61720f9458](https://github.com/lorenzetti-hep/lorenzetti/commit/333841f7e8254dc3454779fea0882d61720f9458)
 - Seed: 34017
+- Gaussian distribution wiht mean=10 and stderr=?
 
 ## 2024_09_17_08_00_0000000000_minibias
-- Aimed for 10k samples generated only 1968
-The time for HIT execution on geant was too long and always gave timeout. The EVT files worked fine.
+- Aimed for 10k samples generated
+The time for HIT execution on geant was too long and always gave timeout.
 - Commit: [333841f7e8254dc3454779fea0882d61720f9458](https://github.com/lorenzetti-hep/lorenzetti/commit/333841f7e8254dc3454779fea0882d61720f9458)
 - Seed: 34017
 - Had a different pythia config from the previous minibias
+- Gaussian distribution wiht mean=40 and stderr=10
 
 ## 2024_11_19_18_53_0000000000_jets
 - WIP
+- Commit: [333841f7e8254dc3454779fea0882d61720f9458](https://github.com/lorenzetti-hep/lorenzetti/commit/333841f7e8254dc3454779fea0882d61720f9458)

@@ -15,7 +15,7 @@ fi
 mkdir -p "${base_dir}/HIT" && cd "${base_dir}/HIT" && \
 echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Started HIT sim" > "${base_dir}/started_HIT.log" && cd $boosted_repo_dir && \
 (python merge_pileup_files.py -i /root/data/local/lorenzetti/2024_08_19_21_08_0000000000_zee/HIT \
-                             -p /root/data/local/lorenzetti/2024_08_22_12_00_0000000000_minibias/HIT/minias.HIT.root \
+                             -p /root/data/local/lorenzetti/2024_09_17_08_00_0000000000_minibias/HIT/minias.HIT.root \
                              -o /root/data/local/lorenzetti/2024_11_21_07_00_0000000000_zee_w_pileup/HIT \
                              --output-name zee_w_pileup |& tee "${base_dir}/HIT.log") && \
 echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Finished HIT sim" > "${base_dir}/finished_HIT.log" && \
