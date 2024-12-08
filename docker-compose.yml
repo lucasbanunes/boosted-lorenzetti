@@ -13,4 +13,3 @@ services:
     - LZT_DATA=${LZT_DATA}
     - PYTHONPATH=${PYTHONPATH}
     - LZT_REPO=${LZT_REPO}
-    
