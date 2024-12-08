@@ -45,21 +45,21 @@ def errorarea(x, y, yerr,
     return ax
 
 
-def plot_rings_profile(df: Union[pd.DataFrame, npt.NDArray[np.float_]],
+def plot_rings_profile(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
                        ax: Optional[plt.Axes] = None,
                        normalize: bool = True,
                        error_margin: bool = True,
-                       label: str = '',
-                       add_rings_labels: bool = True
+                       add_rings_labels: bool = True,
+                       **plot_kwargs
                        ) -> Tuple[plt.Axes,
-                                  npt.NDArray[np.float_],
-                                  npt.NDArray[np.float_]]:
+                                  npt.NDArray[np.floating],
+                                  npt.NDArray[np.floating]]:
     """
     Plots the mean profile of the rings in the calorimeter.
 
     Parameters
     ----------
-    df : Union[pd.DataFrame, npt.NDArray[np.float_]]
+    df : Union[pd.DataFrame, npt.NDArray[np.floating]]
         Dataframe containing the rings or the rings array
     ax : plt.Axes, optional
         Ax to plot the data, by default None
@@ -68,19 +68,19 @@ def plot_rings_profile(df: Union[pd.DataFrame, npt.NDArray[np.float_]],
     error_margin : bool, optional
         If True, plots the error margin as shaded area,
         by default True
-    label : str, optional
-        Label for the plot, by default ''
     add_rings_labels : bool, optional
         If True, adds the rings labels in the plot, by default True
+    plot_kwargs : Dict[str, Any], optional
+        Kwargs for plt.Axes.plot
 
     Returns
     -------
-    Tuple[plt.Axes,npt.NDArray[np.float_],npt.NDArray[np.float_]]
+    Tuple[plt.Axes,npt.NDArray[np.floating],npt.NDArray[np.floating]]
         ax: plt.Axes
             The ax where the data was plotted
-        mean: npt.NDArray[np.float_]
+        mean: npt.NDArray[np.floating]
             The mean profile of the rings
-        std: npt.NDArray[np.float_]
+        std: npt.NDArray[np.floating]
             The standard deviation of the rings
     """
     if isinstance(df, pd.DataFrame):
@@ -91,8 +91,8 @@ def plot_rings_profile(df: Union[pd.DataFrame, npt.NDArray[np.float_]],
     std = rings.std(axis=0)
     if ax is None:
         ax = plt.gca()
-    lines = ax.plot(np.arange(len(mean)), mean,
-                    label=label, marker='o', linestyle='-')
+    lines = ax.plot(np.arange(len(mean)), mean, marker='o', linestyle='-',
+                    **plot_kwargs)
     if error_margin:
         ax.fill_between(np.arange(len(mean)), mean - std, mean + std,
                         facecolor=lines[0].get_color(), alpha=0.25)
@@ -111,7 +111,7 @@ def plot_rings_profile(df: Union[pd.DataFrame, npt.NDArray[np.float_]],
     return ax, mean, std
 
 
-def plot_all_rings(df: Union[pd.DataFrame, npt.NDArray[np.float_]],
+def plot_all_rings(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
                    ax: Optional[plt.Axes] = None,
                    normalize: bool = True,
                    plot_kwargs: Dict[str, Any] = {},
@@ -122,7 +122,7 @@ def plot_all_rings(df: Union[pd.DataFrame, npt.NDArray[np.float_]],
 
     Parameters
     ----------
-    df : Union[pd.DataFrame, npt.NDArray[np.float_]]
+    df : Union[pd.DataFrame, npt.NDArray[np.floating]]
         Dataframe containing the rings or the rings array
     ax : plt.Axes, optional
         Ax to plot the data, by default None

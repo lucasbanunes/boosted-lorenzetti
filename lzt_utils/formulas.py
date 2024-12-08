@@ -32,18 +32,18 @@ def deltaR(eta1: Number, phi1: Number, eta2: Number, phi2: Number) -> float:
     return np.sqrt((deta**2) + (dphi**2))
 
 
-def norm1(data: npt.NDArray[np.float_]) -> npt.NDArray[np.float_]:
+def norm1(data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
     """
     L1 norm
 
     Parameters
     ----------
-    data : npt.NDArray[np.float_]
+    data : npt.NDArray[np.floating]
         Data to normalize
 
     Returns
     -------
-    npt.NDArray[np.float_]
+    npt.NDArray[np.floating]
         Normalized data
     """
     norms = np.abs(data.sum(axis=1))

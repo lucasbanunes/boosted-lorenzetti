@@ -4,7 +4,7 @@ import json
 from lzt_utils.root import rdf_to_pandas
 import pandas as pd
 from pathlib import Path
-from typing import Iterator, Union
+from typing import Iterator, Union, Dict
 
 FILE_DIRECTORIES = [
     'EVT',
@@ -68,10 +68,15 @@ class LztDataset:
         self.aod_path = self.path / 'AOD'
         self.ntuple_path = self.path / 'NTUPLE'
         self.__hit_event_counter = None
+        self.__esd_event_counter = None
 
     def __repr__(self) -> str:
         repr_str = f'LztDataset(path={self.path}, label={self.label})'
         return repr_str
+    
+    @property
+    def name(self) -> str:
+        return self.path.name
 
     @property
     def hit_files(self) -> Iterator[Path]:
@@ -86,17 +91,23 @@ class LztDataset:
         return self.hit_path.glob('*.root')
 
     @property
-    def hit_event_counter(self) -> int:
+    def hit_event_counter(self) -> Dict[str, int]:
         """
         Number of completed HIT events
 
         Returns
         -------
-        int
-            Number of completed HIT events
+        Dict[str, int]
+            Dictionary with the number of events 
+            from hit files. Has the following schema:
+            {
+                'Event': int,
+                'Completed': int,
+                'Timeout': int
+            }
         """
         if self.__hit_event_counter is None:
-            self.__completed_hit_events = {
+            self.__hit_event_counter = {
                 'Event': 0,
                 'Completed': 0,
                 'Timeout': 0
@@ -105,16 +116,61 @@ class LztDataset:
                 with ROOT.TFile(str(hit_file), 'read') as f:
                     # Extracts the data from the histograms
                     hist = f.Get("Event/EventCounter")
-                    self.__completed_hit_events['Event'] += \
+                    self.__hit_event_counter['Event'] += \
                         hist.GetBinContent(1)
-                    self.__completed_hit_events['Completed'] += \
+                    self.__hit_event_counter['Completed'] += \
                         hist.GetBinContent(2)
-                    self.__completed_hit_events['Timeout'] += \
+                    self.__hit_event_counter['Timeout'] += \
                         hist.GetBinContent(3)
-            for key in self.__completed_hit_events:
-                self.__completed_hit_events[key] = int(
-                    self.__completed_hit_events[key])
-        return self.__completed_hit_events
+            for key in self.__hit_event_counter:
+                self.__hit_event_counter[key] = int(
+                    self.__hit_event_counter[key])
+        return self.__hit_event_counter
+
+    @property
+    def esd_files(self) -> Iterator[Path]:
+        """
+        Iterator over the ESD files
+
+        Returns
+        -------
+        Iterator[Path]
+            Iterator over the ESD files
+        """
+        return self.esd_path.glob('*.root')
+
+    @property
+    def esd_event_counter(self) -> Dict[str, int]:
+        """
+        Number of completed ESD events
+
+        Returns
+        -------
+        Dict[str, int]
+            Dictionary with the number of events 
+            from esd files. Has the following schema:
+            {
+                'Event': int,
+                'Completed': int
+            }
+        """
+        if self.__esd_event_counter is None:
+            self.__esd_event_counter = {
+                'Event': 0,
+                'Completed': 0
+            }
+            for esd_file in self.esd_files:
+                with ROOT.TFile(str(esd_file), 'read') as f:
+                    # Extracts the data from the histograms
+                    hist = f.Get("Event/EventCounter")
+                    self.__esd_event_counter['Event'] += \
+                        hist.GetBinContent(1)
+                    self.__esd_event_counter['Completed'] += \
+                        hist.GetBinContent(2)
+            for key in self.__esd_event_counter:
+                self.__esd_event_counter[key] = int(
+                    self.__esd_event_counter[key])
+        return self.__esd_event_counter
 
     def get_ntuple_rdf(self) -> ROOT.RDataFrame:
         """
@@ -127,7 +183,6 @@ class LztDataset:
         """
         ntuple_files = [str(filename) for filename
                         in self.ntuple_path.glob('*.root')]
-        print(f'NTUPLE_FILES: {ntuple_files}')
         rdf = ROOT.RDataFrame("events", ntuple_files)
         return rdf
 
