@@ -9,5 +9,5 @@ build_dir=$lzt_repo/build
 if [ -d "$build_dir" ] && [ "$1" == "overwrite" ]; then
     rm -r $build_dir
 fi
-cd $lzt_repo && (make |& tee $log_path) && source setup.sh
+cd $lzt_repo && source setup_envs.sh && (make |& tee $log_path) && source setup.sh
 cd $call_dir
