@@ -128,7 +128,7 @@ def evaluate_model(model, history,
 
 def evaluate_data(model, x, y, weights):
     y_pred = model.predict(x)
-    y = y.reshape(-1,1)
+    y = y.reshape(-1, 1)
     tpr, fpr, thresholds = roc_curve(y, y_pred)
     acc = np.sum(y == (y_pred > thresholds), axis=0) / len(y)
     metrics = {
