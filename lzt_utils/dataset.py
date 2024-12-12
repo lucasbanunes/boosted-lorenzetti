@@ -73,7 +73,7 @@ class LztDataset:
     def __repr__(self) -> str:
         repr_str = f'LztDataset(path={self.path}, label={self.label})'
         return repr_str
-    
+
     @property
     def name(self) -> str:
         return self.path.name
@@ -98,7 +98,7 @@ class LztDataset:
         Returns
         -------
         Dict[str, int]
-            Dictionary with the number of events 
+            Dictionary with the number of events
             from hit files. Has the following schema:
             {
                 'Event': int,
@@ -147,7 +147,7 @@ class LztDataset:
         Returns
         -------
         Dict[str, int]
-            Dictionary with the number of events 
+            Dictionary with the number of events
             from esd files. Has the following schema:
             {
                 'Event': int,
@@ -172,6 +172,18 @@ class LztDataset:
                     self.__esd_event_counter[key])
         return self.__esd_event_counter
 
+    @property
+    def ntuple_files(self) -> Iterator[Path]:
+        """
+        Iterator over the NTUPLE files
+
+        Returns
+        -------
+        Iterator[Path]
+            Iterator over the NTUPLE files
+        """
+        return self.ntuple_path.glob('*.root')
+
     def get_ntuple_rdf(self) -> ROOT.RDataFrame:
         """
         Get the RDataFrame for the ntuple files
@@ -182,7 +194,7 @@ class LztDataset:
             RDataFrame for the ntuple
         """
         ntuple_files = [str(filename) for filename
-                        in self.ntuple_path.glob('*.root')]
+                        in self.ntuple_files]
         rdf = ROOT.RDataFrame("events", ntuple_files)
         return rdf
 
