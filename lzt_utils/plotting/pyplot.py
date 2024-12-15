@@ -2,7 +2,7 @@
 """Utils for plotting with matplotlib.pyplot"""
 from typing import Any, Dict, Optional, Union, Tuple, List
 import matplotlib.pyplot as plt
-from ..formulas import norm1
+from ..norms import norm1
 from ..constants import RINGS_LAYERS
 import pandas as pd
 import numpy as np
@@ -311,3 +311,60 @@ def categorical_histplot(data: Union[pd.Series, npt.NDArray[np.number]],
         return ax, metrics_dict
     else:
         return ax, {}
+
+
+def plot_roc_curve(tpr: npt.NDArray[np.floating],
+                   fpr: npt.NDArray[np.floating],
+                   ax: Optional[plt.Axes] = None,
+                   plot_kwargs: Dict[str, Any] = {},
+                   add_diagonal: bool = True,
+                   diagonal_kwargs: Dict[str, Any] = {},
+                   axes_set: Dict[str, Any] = {}
+                   ) -> List[plt.Line2D]:
+    """
+    Plots the ROC curve.
+
+    Parameters
+    ----------
+    tpr : npt.NDArray[np.floating]
+        True positive rate
+    fpr : npt.NDArray[np.floating]
+        False positive rate
+    ax : plt.Axes, optional
+        Ax to plot the data, by default plt.gca()
+    plot_kwargs : Dict[str, Any], optional
+        Kwargs for plt.Axes.plot, by default {}
+    add_diagonal : bool, optional
+        If True, adds the diagonal line, by default True
+    diagonal_kwargs : Dict[str, Any], optional
+        Kwargs for plt.Axes.plot, by default {}
+    axes_set : Dict[str, Any], optional
+        Kwargs for plt.Axes.set, by default {}
+
+    Returns
+    -------
+    List[plt.Line2D]
+        List with the lines plotted
+
+    """
+    if ax is None:
+        ax = plt.gca()
+    if add_diagonal:
+        if diagonal_kwargs.get('color') is None:
+            diagonal_kwargs['color'] = 'black'
+        if diagonal_kwargs.get('linestyle') is None:
+            diagonal_kwargs['linestyle'] = '--'
+        ax.plot([0, 1], [0, 1], **diagonal_kwargs)
+    if axes_set.get('title') is None:
+        axes_set['title'] = 'ROC curve'
+    if axes_set.get('xlabel') is None:
+        axes_set['xlabel'] = 'False positive rate'
+    if axes_set.get('ylabel') is None:
+        axes_set['ylabel'] = 'True positive rate'
+    if axes_set.get('xlim') is None:
+        axes_set['xlim'] = [0, 1]
+    if axes_set.get('ylim') is None:
+        axes_set['ylim'] = [0, 1]
+    ax.set(**axes_set)
+    lines = ax.plot(fpr, tpr, **plot_kwargs)
+    return lines

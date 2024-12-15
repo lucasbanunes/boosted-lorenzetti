@@ -1,12 +1,12 @@
 import argparse
 from pathlib import Path
 from typing import Iterable, Tuple
+
 from lzt_utils.dataset import LztDataset
 from lzt_utils.norms import norm1
-from lzt_utils.metrics import sp_index
+from lzt_utils.metrics import sp_index, roc_curve
 from lzt_utils.root import rdf_to_pandas, open_vector
 import tensorflow as tf
-from sklearn.metrics import roc_curve
 from sklearn.model_selection import StratifiedKFold
 from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
@@ -35,6 +35,8 @@ def parse_args():
                         default=RANDOM_SEED, dest='random_seed')
     parser.add_argument('--data-percentage', type=float,
                         default=1.0, dest='data_percentage')
+    parser.add_argument('--epochs', type=int,
+                        default=1000000, dest='epochs')
     args = parser.parse_args()
     args.sig_dir = Path(args.sig_dir).resolve()
     args.bkg_dir = Path(args.bkg_dir).resolve()
@@ -106,40 +108,47 @@ def get_data(sig_dataset: LztDataset,
 
 def evaluate_model(model, history,
                    x_train, y_train, train_weights,
-                   x_val, y_val, val_weights,
-                   output_dir: Path, iteration: int):
+                   x_val, y_val, val_weights):
 
     history_df = pd.DataFrame.from_dict(history.history)
-    history_df.to_csv(output_dir / f'history_{iteration:08d}.csv')
     metrics_list = []
 
-    metrics_train = evaluate_data(model, x_train, y_train, train_weights)
+    metrics_train, y_pred_train = evaluate_data(
+        model, x_train, y_train, train_weights)
     metrics_train = pd.DataFrame.from_dict(metrics_train)
     metrics_train['dataset'] = 'train'
     metrics_list.append(metrics_train)
-    metrics_val = evaluate_data(model, x_val, y_val, val_weights)
+    metrics_val, y_pred_val = evaluate_data(model, x_val, y_val, val_weights)
     metrics_val = pd.DataFrame.from_dict(metrics_val)
     metrics_val['dataset'] = 'val'
     metrics_list.append(metrics_val)
 
-    metrics = pd.concat(metrics_list, axis=0)
-    metrics.to_csv(output_dir / f'metrics_{iteration:08d}.csv')
+    metrics_df = pd.concat(metrics_list, axis=0)
+    predictions_df = pd.DataFrame({
+        'y_true': np.concatenate([y_train, y_val], axis=0),
+        'y_pred': np.concatenate([y_pred_train.flatten(),
+                                  y_pred_val.flatten()], axis=0),
+        'dataset': np.concatenate([np.full(len(y_train), 'train'),
+                                   np.full(len(y_val), 'val')])
+    })
+
+    return history_df, metrics_df, predictions_df
 
 
 def evaluate_data(model, x, y, weights):
     y_pred = model.predict(x)
     y = y.reshape(-1, 1)
-    tpr, fpr, thresholds = roc_curve(y, y_pred)
+    thresholds = np.linspace(0, 1, 300).reshape(1, -1)
+    tpr, fpr, thresholds = roc_curve(y, y_pred, thresholds=thresholds)
     acc = np.sum(y == (y_pred > thresholds), axis=0) / len(y)
     metrics = {
-        'tpr': tpr.tolist(),
-        'fpr': fpr.tolist(),
-        'thresholds': thresholds.tolist(),
-        'sp': sp_index(tpr, fpr).tolist(),
-        'auc': integrate.trapezoid(y=fpr, x=tpr),
+        'tpr': tpr,
+        'fpr': fpr,
+        'thresholds': thresholds,
+        'sp': sp_index(tpr, fpr),
         'accuracy': acc
     }
-    return metrics
+    return metrics, y_pred
 
 
 def main(sig_dir: Path,
@@ -148,7 +157,8 @@ def main(sig_dir: Path,
          dense_layers: Iterable[int],
          n_folds: int,
          random_seed: int,
-         data_percentage: float):
+         data_percentage: float,
+         epochs: int):
     sig_ds = LztDataset.from_dir(sig_dir)
     bkg_ds = LztDataset.from_dir(bkg_dir)
     iterator = get_data(sig_ds, bkg_ds, n_folds, random_seed, data_percentage)
@@ -163,41 +173,61 @@ def main(sig_dir: Path,
     model_arch_json = output_dir / 'model_arch.json'
     with input_args_path.open('w') as f:
         json.dump(input_args, f)
-    for (i,
+    history_per_fold = []
+    metrics_per_fold = []
+    for (ifold,
          x_train, y_train, train_weights,
          x_val, y_val, val_weights) in iterator:
 
-        final_model_path = output_dir / f'final_model_{i:08d}.keras'
-        if final_model_path.exists():
-            continue
+        fold_dir = output_dir / f'fold_{ifold:02d}'
+        fold_dir.mkdir(exist_ok=True)
+
+        final_model_path = fold_dir / 'final_model.keras'
 
         model = get_model(
             x_train.shape[1:],
             dense_layers)
 
-        if i == 0:
+        if ifold == 0:
             with model_arch_json.open('w') as f:
                 f.write(model.to_json())
-        model.save(output_dir / f'inital_model_{i:08d}.keras')
+        model.save(fold_dir / 'inital_model.keras')
         callbacks = [
             tf.keras.callbacks.EarlyStopping(monitor='val_loss',
-                                             patience=10,
+                                             patience=5,
                                              restore_best_weights=True),
-            tf.keras.callbacks.ReduceLROnPlateau(patience=5)
+            tf.keras.callbacks.ReduceLROnPlateau(patience=3)
         ]
         history = model.fit(x_train,
                             y_train,
                             callbacks=callbacks,
                             batch_size=32,
                             class_weight=train_weights,
-                            epochs=int(1e6),
+                            epochs=epochs,
                             verbose=2,    # Line only
                             validation_data=(x_val, y_val))
-        evaluate_model(model, history,
-                       x_train, y_train, train_weights,
-                       x_val, y_val, val_weights,
-                       output_dir=output_dir, iteration=i)
+        history_df, metrics_df, predictions_df = evaluate_model(
+            model, history,
+            x_train, y_train, train_weights,
+            x_val, y_val, val_weights)
+        history_df['fold'] = ifold
+        metrics_df['fold'] = ifold
+        predictions_df['fold'] = ifold
+        history_df.to_csv(fold_dir / 'history.csv')
+        metrics_df.to_csv(fold_dir / 'metrics.csv')
+        predictions_df.to_csv(fold_dir / 'predictions.csv')
         model.save(final_model_path)
+        history_per_fold.append(history_df)
+        metrics_per_fold.append(metrics_df)
+
+    metrics_per_fold = pd.concat(metrics_per_fold, axis=0)
+    metrics_per_fold.to_csv(output_dir / 'metrics_all_folds.csv')
+    history_per_fold = pd.concat(history_per_fold, axis=0)
+    history_per_fold.to_csv(output_dir / 'history_all_folds.csv')
+    auc_per_fold = metrics_per_fold.groupby(['fold', 'dataset']).apply(
+        lambda x: integrate.trapezoid(x['tpr'], x['fpr']))
+    auc_per_fold = auc_per_fold.reset_index().rename(columns={0: 'auc'})
+    auc_per_fold.to_csv(output_dir / 'auc_all_folds.csv')
 
 
 if __name__ == '__main__':
