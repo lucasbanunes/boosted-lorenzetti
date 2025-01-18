@@ -4,8 +4,11 @@
 #include <vector>
 #include <ROOT/RVec.hxx>
 // #include "Lorenzetti/xAOD.h"
-// #include "EventInfo/EventSeedConverter.h"
-// #include "CaloCell/CaloCellConverter.h"
+#include "EventInfo/EventSeedConverter.h"
+#include "EventInfo/EventInfoConverter.h"
+#include "CaloCell/CaloCellConverter.h"
+#include "CaloCell/CaloDetDescriptorConverter.h"
+#include "TruthParticle/TruthParticleConverter.h"
 
 
 namespace Lorenzetti {
@@ -50,7 +53,7 @@ namespace Lorenzetti {
         std::vector<int> cell_links;
     };
 
-    CaloCluster_t makeCaloCluster(ROOT::RVec<xAOD::EventSeed_t> &event_seeds, ROOT::RVec<xAOD::CaloCell_t> &calo_cells){
+    CaloCluster_t makeCaloCluster(ROOT::VecOps::RVec<xAOD::EventSeed_t> &event_seeds, ROOT::VecOps::RVec<xAOD::CaloCell_t> &calo_cells){
         CaloCluster_t calo_cluster = {
             .e=0,
             .et=0,
