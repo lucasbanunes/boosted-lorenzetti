@@ -183,19 +183,59 @@ class LztDataset:
             Iterator over the NTUPLE files
         """
         return self.ntuple_path.glob('*.root')
+    
+    def get_esd_rdf(self, n_files: int =-1) -> ROOT.RDataFrame:
+        """
+        Get the RDataFrame for the esd files
 
-    def get_ntuple_rdf(self) -> ROOT.RDataFrame:
+        Parameters
+        ----------
+        n_files : int
+            Number of files to load.
+            If n_files < 0, loads everything
+
+        Returns
+        -------
+        ROOT.RDataFrame
+            RDataFrame for the esd
+        """
+        if n_files > 0:
+            files = []
+            for i, filename in enumerate(self.esd_files):
+                if i >= n_files:
+                    break
+                files.append(str(filename))
+        else:
+            files = [str(filename) for filename
+                        in self.esd_files]
+        rdf = ROOT.RDataFrame("CollectionTree", files)
+        return rdf
+
+    def get_ntuple_rdf(self, n_files: int = -1) -> ROOT.RDataFrame:
         """
         Get the RDataFrame for the ntuple files
+
+        Parameters
+        ----------
+        n_files : int
+            Number of files to load.
+            If n_files < 0, loads everything
 
         Returns
         -------
         ROOT.RDataFrame
             RDataFrame for the ntuple
         """
-        ntuple_files = [str(filename) for filename
+        if n_files > 0:
+            files = []
+            for i, filename in enumerate(self.ntuple_files):
+                if i >= n_files:
+                    break
+                files.append(str(filename))
+        else:
+            files = [str(filename) for filename
                         in self.ntuple_files]
-        rdf = ROOT.RDataFrame("events", ntuple_files)
+        rdf = ROOT.RDataFrame("events", files)
         return rdf
 
     def get_ntuple_pdf(self) -> pd.DataFrame:
