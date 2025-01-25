@@ -90,6 +90,7 @@ def open_vector(column: str, vec_len: int, rdf: ROOT.RDataFrame
 def parse_inf(value: str) -> str:
     """
     Parse a string that can be 'inf' to 1000000000 (1 billion).
+    This is needed since ROOT does not support 'inf' as a value.
 
     Parameters
     ----------

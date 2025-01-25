@@ -1,8 +1,8 @@
 name: lorenzetti
 services:
-  dev:
-    image: lorenzetti/lorenzetti:latest
-    container_name: dev
+  lorenzetti:
+    image: lorenzetti/lorenzetti:${TAG}
+    container_name: lorenzetti-container
     volumes:
       - /home/${USERNAME}/data:/root/data
       - /mnt/d/data:/root/ext_data
