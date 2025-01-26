@@ -44,8 +44,13 @@ def rdf_to_pandas(rdf: ROOT.RDataFrame,
     """
     if columns is None:
         pdf_dict = rdf.AsNumpy()
+    elif isinstance(columns, list):
+        if columns:
+            pdf_dict = rdf.AsNumpy(columns)
+        else:
+            return pd.DataFrame()
     else:
-        pdf_dict = rdf.AsNumpy(columns)
+        raise TypeError('Columns must be a list of strings')
     keys = list(pdf_dict.keys())
     for key in keys:
         # this is necessary because the keys are of type
@@ -86,6 +91,7 @@ def open_vector(column: str, vec_len: int, rdf: ROOT.RDataFrame
         rdf = rdf.Define(new_name, f'{column}[{i}]')
         column_names.append(new_name)
     return column_names, rdf
+
 
 def parse_inf(value: str) -> str:
     """

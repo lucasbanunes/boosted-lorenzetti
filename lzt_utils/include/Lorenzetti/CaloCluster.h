@@ -3,12 +3,6 @@
 
 #include <vector>
 #include <ROOT/RVec.hxx>
-// #include "Lorenzetti/xAOD.h"
-#include "EventInfo/EventSeedConverter.h"
-#include "EventInfo/EventInfoConverter.h"
-#include "CaloCell/CaloCellConverter.h"
-#include "CaloCell/CaloDetDescriptorConverter.h"
-#include "TruthParticle/TruthParticleConverter.h"
 
 
 namespace Lorenzetti {
