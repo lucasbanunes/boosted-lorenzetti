@@ -1,7 +1,7 @@
 import os
 import ROOT
 import json
-from lzt_utils.root import rdf_to_pandas
+from lzt_utils.root import rdf_to_pandas, rdf_column_names
 import pandas as pd
 from pathlib import Path
 from typing import Iterator, Union, Dict, List, Any
@@ -16,24 +16,236 @@ FILE_DIRECTORIES = [
     'NTUPLE'
 ]
 
+ESD_STRUCTS = [
+    'CaloCellContainer_Cells',
+    'CaloDetDescriptorContainer_Cells',
+    'EventInfoContainer_Events',
+    'EventSeedContainer_Seeds',
+    'TruthParticleContainer_Particles'
+]
+
+ESD_STRUCT_FILEDS = [
+    'CaloCellContainer_Cells.descriptor_link',
+    'CaloCellContainer_Cells.deta',
+    'CaloCellContainer_Cells.dphi',
+    'CaloCellContainer_Cells.e',
+    'CaloCellContainer_Cells.et',
+    'CaloCellContainer_Cells.eta',
+    'CaloCellContainer_Cells.phi',
+    'CaloCellContainer_Cells.tau',
+    'CaloDetDescriptorContainer_Cells.bc_duration',
+    'CaloDetDescriptorContainer_Cells.bcid_end',
+    'CaloDetDescriptorContainer_Cells.bcid_start',
+    'CaloDetDescriptorContainer_Cells.cell_link',
+    'CaloDetDescriptorContainer_Cells.deta',
+    'CaloDetDescriptorContainer_Cells.detector',
+    'CaloDetDescriptorContainer_Cells.dphi',
+    'CaloDetDescriptorContainer_Cells.e',
+    'CaloDetDescriptorContainer_Cells.edep',
+    'CaloDetDescriptorContainer_Cells.edep_per_bunch',
+    'CaloDetDescriptorContainer_Cells.eta',
+    'CaloDetDescriptorContainer_Cells.hash',
+    'CaloDetDescriptorContainer_Cells.phi',
+    'CaloDetDescriptorContainer_Cells.pulse',
+    'CaloDetDescriptorContainer_Cells.sampling',
+    'CaloDetDescriptorContainer_Cells.tau',
+    'CaloDetDescriptorContainer_Cells.tof',
+    'CaloDetDescriptorContainer_Cells.z',
+    'EventInfoContainer_Events.avgmu',
+    'EventInfoContainer_Events.eventNumber',
+    'EventInfoContainer_Events.runNumber',
+    'EventSeedContainer_Seeds.e',
+    'EventSeedContainer_Seeds.et',
+    'EventSeedContainer_Seeds.eta',
+    'EventSeedContainer_Seeds.id',
+    'EventSeedContainer_Seeds.phi',
+    'TruthParticleContainer_Particles.e',
+    'TruthParticleContainer_Particles.et',
+    'TruthParticleContainer_Particles.eta',
+    'TruthParticleContainer_Particles.pdgid',
+    'TruthParticleContainer_Particles.phi',
+    'TruthParticleContainer_Particles.px',
+    'TruthParticleContainer_Particles.py',
+    'TruthParticleContainer_Particles.pz',
+    'TruthParticleContainer_Particles.seedid',
+    'TruthParticleContainer_Particles.vx',
+    'TruthParticleContainer_Particles.vy',
+    'TruthParticleContainer_Particles.vz'
+]
+
+
+AOD_STRUCTS = [
+    'CaloCellContainer_Cells',
+    'CaloClusterContainer_Clusters',
+    'CaloDetDescriptorContainer_Cells',
+    'CaloRingsContainer_Rings',
+    'ElectronContainer_Electrons',
+    'EventInfoContainer_Events',
+    'EventSeedContainer_Seeds',
+    'TruthParticleContainer_Particles'
+]
+
+
+AOD_STRUCT_FIELDS = [
+    'CaloCellContainer_Cells.descriptor_link',
+    'CaloCellContainer_Cells.deta',
+    'CaloCellContainer_Cells.dphi',
+    'CaloCellContainer_Cells.e',
+    'CaloCellContainer_Cells.et',
+    'CaloCellContainer_Cells.eta',
+    'CaloCellContainer_Cells.phi',
+    'CaloCellContainer_Cells.tau',
+    'CaloClusterContainer_Clusters.cell_links',
+    'CaloClusterContainer_Clusters.deta',
+    'CaloClusterContainer_Clusters.dphi',
+    'CaloClusterContainer_Clusters.e',
+    'CaloClusterContainer_Clusters.e0',
+    'CaloClusterContainer_Clusters.e1',
+    'CaloClusterContainer_Clusters.e2',
+    'CaloClusterContainer_Clusters.e233',
+    'CaloClusterContainer_Clusters.e237',
+    'CaloClusterContainer_Clusters.e277',
+    'CaloClusterContainer_Clusters.e2tsts1',
+    'CaloClusterContainer_Clusters.e3',
+    'CaloClusterContainer_Clusters.ehad1',
+    'CaloClusterContainer_Clusters.ehad2',
+    'CaloClusterContainer_Clusters.ehad3',
+    'CaloClusterContainer_Clusters.emaxs1',
+    'CaloClusterContainer_Clusters.emaxs2',
+    'CaloClusterContainer_Clusters.eratio',
+    'CaloClusterContainer_Clusters.et',
+    'CaloClusterContainer_Clusters.eta',
+    'CaloClusterContainer_Clusters.etot',
+    'CaloClusterContainer_Clusters.f0',
+    'CaloClusterContainer_Clusters.f1',
+    'CaloClusterContainer_Clusters.f2',
+    'CaloClusterContainer_Clusters.f3',
+    'CaloClusterContainer_Clusters.fracMax',
+    'CaloClusterContainer_Clusters.lambdaCenter',
+    'CaloClusterContainer_Clusters.lateralMom',
+    'CaloClusterContainer_Clusters.longitudinalMom',
+    'CaloClusterContainer_Clusters.phi',
+    'CaloClusterContainer_Clusters.reta',
+    'CaloClusterContainer_Clusters.rhad',
+    'CaloClusterContainer_Clusters.rhad1',
+    'CaloClusterContainer_Clusters.rphi',
+    'CaloClusterContainer_Clusters.secondLambda',
+    'CaloClusterContainer_Clusters.secondR',
+    'CaloClusterContainer_Clusters.weta2',
+    'CaloDetDescriptorContainer_Cells.bc_duration',
+    'CaloDetDescriptorContainer_Cells.bcid_end',
+    'CaloDetDescriptorContainer_Cells.bcid_start',
+    'CaloDetDescriptorContainer_Cells.cell_link',
+    'CaloDetDescriptorContainer_Cells.deta',
+    'CaloDetDescriptorContainer_Cells.detector',
+    'CaloDetDescriptorContainer_Cells.dphi',
+    'CaloDetDescriptorContainer_Cells.e',
+    'CaloDetDescriptorContainer_Cells.edep',
+    'CaloDetDescriptorContainer_Cells.edep_per_bunch',
+    'CaloDetDescriptorContainer_Cells.eta',
+    'CaloDetDescriptorContainer_Cells.hash',
+    'CaloDetDescriptorContainer_Cells.phi',
+    'CaloDetDescriptorContainer_Cells.pulse',
+    'CaloDetDescriptorContainer_Cells.sampling',
+    'CaloDetDescriptorContainer_Cells.tau',
+    'CaloDetDescriptorContainer_Cells.tof',
+    'CaloDetDescriptorContainer_Cells.z',
+    'CaloRingsContainer_Rings.cluster_link',
+    'CaloRingsContainer_Rings.rings',
+    'ElectronContainer_Electrons.cluster_link',
+    'ElectronContainer_Electrons.decisions',
+    'ElectronContainer_Electrons.e',
+    'ElectronContainer_Electrons.et',
+    'ElectronContainer_Electrons.eta',
+    'ElectronContainer_Electrons.phi',
+    'EventInfoContainer_Events.avgmu',
+    'EventInfoContainer_Events.eventNumber',
+    'EventInfoContainer_Events.runNumber',
+    'EventSeedContainer_Seeds.e',
+    'EventSeedContainer_Seeds.et',
+    'EventSeedContainer_Seeds.eta',
+    'EventSeedContainer_Seeds.id',
+    'EventSeedContainer_Seeds.phi',
+    'TruthParticleContainer_Particles.e',
+    'TruthParticleContainer_Particles.et',
+    'TruthParticleContainer_Particles.eta',
+    'TruthParticleContainer_Particles.pdgid',
+    'TruthParticleContainer_Particles.phi',
+    'TruthParticleContainer_Particles.px',
+    'TruthParticleContainer_Particles.py',
+    'TruthParticleContainer_Particles.pz',
+    'TruthParticleContainer_Particles.seedid',
+    'TruthParticleContainer_Particles.vx',
+    'TruthParticleContainer_Particles.vy',
+    'TruthParticleContainer_Particles.vz'
+]
+
+
+def esd_rdf_to_ak(rdf: ROOT.RDataFrame,
+                  columns: List[str] = None,
+                  ak_kwargs: Dict[str, Any] = {}
+                  ) -> ak.Array:
+    if columns is None:
+        columns = ESD_STRUCT_FILEDS
+    rdf_ak = ak.from_rdataframe(rdf, columns=columns,
+                                **ak_kwargs)
+    rdf_ak_dict = {
+        key: {} for key in ESD_STRUCTS
+    }
+    to_int = [
+        'EventInfoContainer_Events.eventNumber'
+    ]
+
+    for field in rdf_ak.fields:
+        # The events from EventInfoContainer are always a list
+        # with one element, so we extract the first element.
+        main_field, subfield = field.split('.')
+        if main_field == 'EventInfoContainer_Events':
+            rdf_ak_dict[main_field][subfield] = ak.firsts(rdf_ak[field])
+        else:
+            rdf_ak_dict[main_field][subfield] = rdf_ak[field]
+
+        if field in to_int:
+            rdf_ak_dict[main_field][subfield] = ak.values_astype(
+                rdf_ak_dict[main_field][subfield], np.int32)
+
+    rdf_ak = ak.Array({key: ak.zip(val)
+                       for key, val in rdf_ak_dict.items()
+                       if val})
+    return rdf_ak
+
 
 def aod_rdf_to_ak(rdf: ROOT.RDataFrame,
                   columns: List[str] = None,
                   ak_kwargs: Dict[str, Any] = {}
                   ) -> ak.Array:
+    if columns is None:
+        columns = rdf_column_names(rdf)
     rdf_ak = ak.from_rdataframe(rdf, columns=columns,
                                 **ak_kwargs)
+    rdf_ak_dict = {
+        key: {} for key in AOD_STRUCTS
+    }
+    to_int = [
+        'EventInfoContainer_Events.eventNumber'
+    ]
+
     for field in rdf_ak.fields:
         # The events from EventInfoContainer are always a list
         # with one element, so we extract the first element.
-        if field == 'EventInfoContainer_Events.eventNumber':
-            rdf_ak[field] = ak.values_astype(
-                ak.firsts(rdf_ak[field]), np.int32)
-        elif field == 'EventInfoContainer_Events.runNumber':
-            rdf_ak[field] = ak.values_astype(
-                ak.firsts(rdf_ak[field]), np.int32)
-        elif field.startswith('EventInfoContainer_Events'):
-            rdf_ak[field] = ak.firsts(rdf_ak[field])
+        main_field, subfield = field.split('.')
+        if main_field == 'EventInfoContainer_Events':
+            rdf_ak_dict[main_field][subfield] = ak.firsts(rdf_ak[field])
+        else:
+            rdf_ak_dict[main_field][subfield] = rdf_ak[field]
+
+        if field in to_int:
+            rdf_ak_dict[main_field][subfield] = ak.values_astype(
+                rdf_ak_dict[main_field][subfield], np.int32)
+
+    rdf_ak = ak.Array({key: ak.zip(val)
+                       for key, val in rdf_ak_dict.items()
+                       if val})
     return rdf_ak
 
 
@@ -194,17 +406,27 @@ class LztDataset:
                     self.__esd_event_counter[key])
         return self.__esd_event_counter
 
-    @property
-    def ntuple_files(self) -> Iterator[Path]:
+    def get_esd_tchain(self,  n_files: int = -1) -> ROOT.TChain:
         """
-        Iterator over the NTUPLE files
+        Get a TChain with the ESD files
+
+        Parameters
+        ----------
+        n_files : int
+            Number of files to load.
+            If n_files < 0, loads everything
 
         Returns
         -------
-        Iterator[Path]
-            Iterator over the NTUPLE files
+        ROOT.TChain
+            TChain with the ESD files
         """
-        return self.ntuple_path.glob('*.root')
+        chain = ROOT.TChain("CollectionTree")
+        for i, filename in enumerate(self.esd_files):
+            if n_files >= 0 and i >= n_files:
+                break
+            chain.Add(str(filename))
+        return chain
 
     def get_esd_rdf(self, n_files: int = -1) -> ROOT.RDataFrame:
         """
@@ -283,6 +505,28 @@ class LztDataset:
         """
         return self.aod_path.glob('*.root')
 
+    def get_aod_tchain(self,  n_files: int = -1) -> ROOT.TChain:
+        """
+        Get a TChain with the AOD files
+
+        Parameters
+        ----------
+        n_files : int
+            Number of files to load.
+            If n_files < 0, loads everything
+
+        Returns
+        -------
+        ROOT.TChain
+            TChain with the AOD files
+        """
+        chain = ROOT.TChain("CollectionTree")
+        for i, filename in enumerate(self.aod_files):
+            if n_files >= 0 and i >= n_files:
+                break
+            chain.Add(str(filename))
+        return chain
+
     def get_aod_rdf(self, n_files: int = -1) -> ROOT.RDataFrame:
         """
         Get the RDataFrame for the aod files
@@ -335,6 +579,18 @@ class LztDataset:
         """
         aod_rdf = self.get_aod_rdf(n_files)
         return aod_rdf_to_ak(aod_rdf, columns=columns, ak_kwargs=ak_kwargs)
+
+    @property
+    def ntuple_files(self) -> Iterator[Path]:
+        """
+        Iterator over the NTUPLE files
+
+        Returns
+        -------
+        Iterator[Path]
+            Iterator over the NTUPLE files
+        """
+        return self.ntuple_path.glob('*.root')
 
     def get_ntuple_rdf(self, n_files: int = -1) -> ROOT.RDataFrame:
         """

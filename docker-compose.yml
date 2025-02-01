@@ -11,5 +11,5 @@ services:
     tty: true
     environment:
     - LZT_DATA=${LZT_DATA}
-    - PYTHONPATH=${PYTHONPATH}
     - LZT_REPO=${LZT_REPO}
+    - PYTHONPATH=${PYTHONPATH}

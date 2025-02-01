@@ -1,6 +1,8 @@
-from typing import Union, Iterable, Iterator
+from typing import Literal, Union, Iterable, Iterator
 import os
 from glob import iglob
+from numbers import Number
+import logging
 
 
 def open_directories(
@@ -52,3 +54,64 @@ def open_directories(
             )
         if dev and i > 0:
             break
+
+
+def is_between(value: Number, low: Number, high: Number,
+               inclusive: Literal['both', 'neither', 'left', 'right']
+               ) -> bool:
+    """
+    Check if a value is between two values.
+
+    Parameters
+    ----------
+    value : Number
+        The value to check.
+    low : Number
+        The lower bound.
+    high : Number
+        The upper bound.
+
+    Returns
+    -------
+    bool
+        True if the value is between low and high, False otherwise.
+    """
+    if inclusive == 'both':
+        return (low <= value) & (value <= high)
+    elif inclusive == 'neither':
+        return (low < value) & (value < high)
+    elif inclusive == 'left':
+        return (low <= value) & (value < high)
+    elif inclusive == 'right':
+        return (low < value) & (value <= high)
+    else:
+        raise ValueError(f'{inclusive} is not a valid inclusive option')
+
+
+def set_logger(level="INFO"):
+    logging_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s | %(levelname)s | %(name)s | %(module)s"
+                " | %(lineno)s | %(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S"
+            },
+        },
+        "handlers": {
+            "stdout": {
+                "class": "logging.StreamHandler",
+                "level": level,
+                "formatter": "default",
+                "stream": "ext://sys.stdout"
+            },
+        },
+        "loggers": {
+            "": {
+                "level": level,
+                "handlers": ["stdout"]
+            }
+        }
+    }
+    logging.config.dictConfig(logging_config)
