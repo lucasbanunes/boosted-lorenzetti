@@ -1,8 +1,8 @@
-name: lorenzetti
+name: lorenzetti-${TAG}
 services:
   lorenzetti:
-    image: lorenzetti/lorenzetti:${TAG}
-    container_name: lorenzetti-container
+    image: ${DOCKER_USERNAME}/lorenzetti:${TAG}
+    container_name: lzt-container-${TAG}
     volumes:
       - /home/${USERNAME}/data:/root/data
       - /mnt/d/data:/root/ext_data
@@ -12,4 +12,4 @@ services:
     environment:
     - LZT_DATA=${LZT_DATA}
     - LZT_REPO=${LZT_REPO}
-    - PYTHONPATH=${PYTHONPATH}
+    # - PYTHONPATH=${PYTHONPATH}
