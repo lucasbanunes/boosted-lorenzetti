@@ -6,10 +6,12 @@ base_dir="${1}/2025_03_22_10_00_0000000000_zee" && \
 evt_dir="${base_dir}/EVT" && \
 hit_dir="${base_dir}/HIT" && \
 esd_dir="${base_dir}/ESD" && \
+source /hep/setup_hep.sh && cd "${HOME}/workspaces/lorenzetti/lorenzetti" && \
+source setup.sh && cd $call_dir && \
 # generate events with pythia
 mkdir -p $evt_dir && cd $evt_dir && \
 echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Started EVT sim" > "${base_dir}/started_EVT.log" && \
-(gen_zee.py --output-file zee.EVT.root --nov $NOV --pileup-avg 0 --seed $seed -nt $n_workers |& tee "${base_dir}/zee.EVT.log") && \
+(gen_zee.py --output-file zee.EVT.root --nov $NOV --pileup-avg 0 --seed $seed -nt $n_workers --events-per-job 500 |& tee "${base_dir}/zee.EVT.log") && \
 echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Finished EVT sim" > "${base_dir}/finished_EVT.log" && \
 # generate hits around the truth particle seed
 mkdir -p $hit_dir && cd $hit_dir && \
