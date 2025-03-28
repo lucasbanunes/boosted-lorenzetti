@@ -8,6 +8,7 @@
 # Usage
 # $ sbatch submit_lorenzetti.sh <command>
 
+echo "Running command: ${@} on lorenzetti_latest.sif"
 singularity exec \
 --nv \
 --bind /mnt/cern_data:/mnt/cern_data \
