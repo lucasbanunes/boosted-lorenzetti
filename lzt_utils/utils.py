@@ -88,7 +88,7 @@ def is_between(value: Number, low: Number, high: Number,
         raise ValueError(f'{inclusive} is not a valid inclusive option')
 
 
-def set_logger(level="INFO"):
+def set_logger(level="INFO", name=""):
     logging_config = {
         "version": 1,
         "disable_existing_loggers": False,
@@ -108,7 +108,7 @@ def set_logger(level="INFO"):
             },
         },
         "loggers": {
-            "": {
+            name: {
                 "level": level,
                 "handlers": ["stdout"]
             }

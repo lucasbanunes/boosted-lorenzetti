@@ -45,11 +45,12 @@ def errorarea(x, y, yerr,
     return ax
 
 
-def plot_rings_profile(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
+def plot_rings_profile(data: Union[pd.DataFrame, npt.NDArray[np.floating]],
                        ax: Optional[plt.Axes] = None,
                        normalize: bool = True,
                        error_margin: bool = True,
                        add_rings_labels: bool = True,
+                       ax_set_kwargs: Dict[str, Any] = {},
                        **plot_kwargs
                        ) -> Tuple[plt.Axes,
                                   npt.NDArray[np.floating],
@@ -59,7 +60,7 @@ def plot_rings_profile(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
 
     Parameters
     ----------
-    df : Union[pd.DataFrame, npt.NDArray[np.floating]]
+    data : Union[pd.DataFrame, npt.NDArray[np.floating]]
         Dataframe containing the rings or the rings array
     ax : plt.Axes, optional
         Ax to plot the data, by default None
@@ -83,12 +84,12 @@ def plot_rings_profile(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
         std: npt.NDArray[np.floating]
             The standard deviation of the rings
     """
-    if isinstance(df, pd.DataFrame):
-        rings = df.values
+    if isinstance(data, pd.DataFrame):
+        data = data.values
     if normalize:
-        rings = norm1(rings)
-    mean = rings.mean(axis=0)
-    std = rings.std(axis=0)
+        data = norm1(data)
+    mean = data.mean(axis=0)
+    std = data.std(axis=0)
     if ax is None:
         ax = plt.gca()
     lines = ax.plot(np.arange(len(mean)), mean, marker='o', linestyle='-',
@@ -104,10 +105,18 @@ def plot_rings_profile(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
                     verticalalignment='center', fontsize=10)
     ax.axhline(0, color='black', linestyle='--')
     ax.legend()
-    ax.set_title('Rings mean profile')
-    ax.set_xlim(0, len(mean))
-    ax.set_xlabel('Ring index')
-    ax.set_ylabel('Normalized energy')
+    if 'title' not in ax_set_kwargs:
+        ax_set_kwargs['title'] = 'Rings $\\mu \\pm \\sigma$'
+    if 'xlabel' not in ax_set_kwargs:
+        ax_set_kwargs['xlabel'] = 'Ring index'
+    if 'ylabel' not in ax_set_kwargs:
+        if normalize:
+            ax_set_kwargs['ylabel'] = 'Normalized energy'
+        else:
+            ax_set_kwargs['ylabel'] = 'Energy'
+    if 'xlim' not in ax_set_kwargs:
+        ax_set_kwargs['xlim'] = (0, len(mean))
+    ax.set(**ax_set_kwargs)
     return ax, mean, std
 
 
@@ -115,6 +124,7 @@ def plot_all_rings(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
                    ax: Optional[plt.Axes] = None,
                    normalize: bool = True,
                    plot_kwargs: Dict[str, Any] = {},
+                   ax_set_kwargs: Dict[str, Any] = {},
                    add_rings_labels: bool = True
                    ) -> plt.Axes:
     """
@@ -151,8 +161,14 @@ def plot_all_rings(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
 
     n_rings = rings.shape[1]
     x = np.arange(n_rings)
+    if 'label' in plot_kwargs:
+        label = plot_kwargs.pop('label')
+    else:
+        label = ''
     for i, ring_vector in enumerate(rings):
-        ax.plot(x, ring_vector, **plot_kwargs)
+        lines = ax.plot(x, ring_vector, **plot_kwargs)
+    if label:
+        ax.plot([], [], label=label, color=lines[0].get_color())
     if add_rings_labels:
         _, y_up = ax.get_ylim()
         for layer_name, idxs in RINGS_LAYERS.items():
@@ -160,13 +176,20 @@ def plot_all_rings(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
             ax.text(idxs[0]+0.5, y_up*0.95, layer_name,
                     verticalalignment='center', fontsize=10)
     ax.axhline(0, color='black', linestyle='--')
-    ax.set_title('All Rings')
-    ax.set_xlim(0, n_rings)
-    ax.set_xlabel('Ring index')
-    if normalize:
-        ax.set_ylabel('Normalized energy')
-    else:
-        ax.set_ylabel('Energy')
+    if 'title' not in ax_set_kwargs:
+        ax_set_kwargs['title'] = 'All rings'
+    if 'xlabel' not in ax_set_kwargs:
+        ax_set_kwargs['xlabel'] = 'Ring index'
+    if 'ylabel' not in ax_set_kwargs:
+        if normalize:
+            ax_set_kwargs['ylabel'] = 'Normalized energy'
+        else:
+            ax_set_kwargs['ylabel'] = 'Energy'
+    if 'xlim' not in ax_set_kwargs:
+        ax_set_kwargs['xlim'] = (0, n_rings)
+    ax.set(**ax_set_kwargs)
+    if label:
+        ax.legend()
     return ax
 
 
@@ -222,11 +245,15 @@ def histplot(data: Union[pd.Series, npt.NDArray[np.number]],
         ax = plt.gca()
     if bin_max is None:
         bin_max = data.max()
+        real_max = bin_max
     else:
+        real_max = data.max()
         data = data[data <= bin_max]
     if bin_min is None:
         bin_min = data.min()
+        real_min = bin_min
     else:
+        real_min = data.min()
         data = data[data >= bin_min]
     if hist_kwargs.get('bins') is None:
         hist_kwargs['bins'] = np.linspace(bin_min, bin_max, nbins)
@@ -237,8 +264,8 @@ def histplot(data: Union[pd.Series, npt.NDArray[np.number]],
             'Samples': len(data),
             'Mean': data.mean(),
             'Std': data.std(),
-            'Min': bin_min,
-            'Max': bin_max
+            'Min': real_min,
+            'Max': real_max
         }
         for key, value in metrics_dict.items():
             if isinstance(value, (int, np.integer)):

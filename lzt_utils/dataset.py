@@ -257,8 +257,6 @@ class LztDataset:
     ----------
     path : str
         Path to the dataset directory
-    basename : str
-        Basename of the dataset files
     label : str, optional
         Dataset label, useful for plotting, by default None
 
@@ -278,7 +276,6 @@ class LztDataset:
 
     def __init__(self,
                  path: Union[str, Path],
-                 basename: str,
                  label: str = None,
                  **kwargs):
         """
@@ -286,21 +283,20 @@ class LztDataset:
         ----------
         path : str
             Path to the dataset directory
-        basename : str
-            Basename of the dataset files
         label : str, optional
             Dataset label, useful for plotting, by default None
         """
         if isinstance(path, str):
             self.path = Path(path)
         self.path = path
-        self.basename = basename
         self.label = label
         self.evt_path = self.path / 'EVT'
         self.hit_path = self.path / 'HIT'
         self.esd_path = self.path / 'ESD'
         self.aod_path = self.path / 'AOD'
+        self.__aod_tchain = None
         self.ntuple_path = self.path / 'NTUPLE'
+        self.__ntuple_tchain = None
         self.__hit_event_counter = None
         self.__esd_event_counter = None
 
@@ -505,6 +501,23 @@ class LztDataset:
         """
         return self.aod_path.glob('*.root')
 
+    @property
+    def aod_tchain(self) -> ROOT.TChain:
+        """
+        Get a TChain with the AOD files
+
+        Returns
+        -------
+        ROOT.TChain
+            TChain with the AOD files
+        """
+        if self.__ntuple_tchain is not None:
+            return self.__ntuple_tchain
+        self.__ntuple_tchain = ROOT.TChain("CollectionTree")
+        for filename in self.aod_files:
+            self.__ntuple_tchain.Add(str(filename))
+        return self.__ntuple_tchain
+
     def get_aod_tchain(self,  n_files: int = -1) -> ROOT.TChain:
         """
         Get a TChain with the AOD files
@@ -592,6 +605,23 @@ class LztDataset:
         """
         return self.ntuple_path.glob('*.root')
 
+    @property
+    def ntuple_tchain(self) -> ROOT.TChain:
+        """
+        Get a TChain with the NTUPLE files
+
+        Returns
+        -------
+        ROOT.TChain
+            TChain with the NTUPLE files
+        """
+        if self.__ntuple_tchain is not None:
+            return self.__ntuple_tchain
+        self.__ntuple_tchain = ROOT.TChain("physics")
+        for filename in self.ntuple_files:
+            self.__ntuple_tchain.Add(str(filename))
+        return self.__ntuple_tchain
+
     def get_ntuple_rdf(self, n_files: int = -1) -> ROOT.RDataFrame:
         """
         Get the RDataFrame for the ntuple files
@@ -616,7 +646,7 @@ class LztDataset:
         else:
             files = [str(filename) for filename
                      in self.ntuple_files]
-        rdf = ROOT.RDataFrame("events", files)
+        rdf = ROOT.RDataFrame("physics", files)
         return rdf
 
     def get_ntuple_pdf(self) -> pd.DataFrame:
