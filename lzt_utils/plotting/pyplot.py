@@ -1,12 +1,16 @@
 
 """Utils for plotting with matplotlib.pyplot"""
 from typing import Any, Dict, Optional, Union, Tuple, List
+import matplotlib as mpl
 import matplotlib.pyplot as plt
-from ..norms import norm1
-from ..constants import RINGS_LAYERS
 import pandas as pd
 import numpy as np
 import numpy.typing as npt
+import seaborn as sns
+from numbers import Number
+
+from ..norms import norm1
+from ..constants import RINGS_LAYERS
 
 
 def get_plt_color_cycle() -> List[str]:
@@ -395,3 +399,161 @@ def plot_roc_curve(tpr: npt.NDArray[np.floating],
     ax.set(**axes_set)
     lines = ax.plot(fpr, tpr, **plot_kwargs)
     return lines
+
+
+def hist2dplot(data: pd.DataFrame,
+               x: str,
+               y: str,
+               xlabel: str = None,
+               xlim: Tuple[Number, Number] | None = None,
+               ylabel: str = None,
+               ylim: Tuple[Number, Number] | None = None,
+               data_label: str = None,
+               norm: str = 'log',
+               figsize=None,
+               marginal_ticks: bool = False,
+               vmin=None,
+               vmax=None,
+               density: bool = True,
+               title: str | None = None,
+               corner_text: str | None = None,
+               xaxis_set: Dict[str, Any] = {},
+               yaxis_set: Dict[str, Any] = {},
+               joint_axis_set: Dict[str, Any] = {},
+               xaxis_hist_kwargs: Dict[str, Any] = {},
+               yaxis_hist_kwargs: Dict[str, Any] = {},
+               joint_hist_kwargs: Dict[str, Any] = {},):
+
+    xlabel = x if xlabel is None else xlabel
+    ylabel = y if ylabel is None else ylabel
+    data_label = '' if data_label is None else data_label
+
+    if norm == 'log':
+        plot_scale = 'log'
+        norm = mpl.colors.LogNorm(vmin, vmax)
+    elif norm == 'linear':
+        plot_scale = 'linear'
+        norm = mpl.colors.Normalize(vmin, vmax)
+    else:
+        raise NotImplementedError(
+            f'Norm {norm} not implemented. Use "log" or "linear"'
+        )
+
+    jgrid = sns.JointGrid(marginal_ticks=marginal_ticks)
+    xaxis_hist_kwargs['density'] = density
+    if 'color' not in xaxis_hist_kwargs:
+        xaxis_hist_kwargs['color'] = 'k'
+    if 'histtype' not in xaxis_hist_kwargs:
+        xaxis_hist_kwargs['histtype'] = 'step'
+
+    x_hists, xbins, x_patches = jgrid.ax_marg_x.hist(
+        data[x],
+        **xaxis_hist_kwargs)
+
+    xaxis_set['yscale'] = plot_scale
+    xaxis_set['xlabel'] = ''
+    xaxis_set['ylabel'] = 'Density' if density else 'Counts'
+    xaxis_set['xlim'] = xlim
+
+    jgrid.ax_marg_x.set(**xaxis_set)
+
+    yaxis_hist_kwargs['density'] = density
+    # Rotates the histogram to match the joint axis
+    yaxis_hist_kwargs['orientation'] = 'horizontal'
+    if 'color' not in yaxis_hist_kwargs:
+        yaxis_hist_kwargs['color'] = 'k'
+    if 'histtype' not in yaxis_hist_kwargs:
+        yaxis_hist_kwargs['histtype'] = 'step'
+
+    y_hists, ybins, y_patches = jgrid.ax_marg_y.hist(
+        data[y],
+        **yaxis_hist_kwargs)
+
+    yaxis_set['xscale'] = plot_scale
+    yaxis_set['xlabel'] = 'Density' if density else 'Counts'
+    yaxis_set['ylabel'] = ''
+    yaxis_set['ylim'] = ylim
+
+    jgrid.ax_marg_y.set(**yaxis_set)
+
+    joint_hist_kwargs['density'] = density
+    joint_hist_kwargs['bins'] = [
+        xaxis_hist_kwargs.get('bins', None),
+        yaxis_hist_kwargs.get('bins', None)
+    ]
+    joint_hist_kwargs['norm'] = norm
+    joint_hist_kwargs['cmin'] = 1e-12
+
+    joint = jgrid.ax_joint.hist2d(
+        data[x],
+        data[y],
+        range=[
+            jgrid.ax_marg_x.get_xlim(),
+            jgrid.ax_marg_y.get_ylim()],
+        **joint_hist_kwargs)
+
+    joint_axis_set['xlabel'] = xlabel
+    joint_axis_set['ylabel'] = ylabel
+
+    if 'xlim' in xaxis_set:
+        joint_axis_set['xlim'] = xlim
+
+    if 'xlim' in yaxis_set:
+        joint_axis_set['ylim'] = ylim
+
+    # Setting the colorbar to the right, it orignaly stays between
+    # the join ax and the marg_y ax
+    # May become a function in the future
+    cbar_ax = plt.colorbar(
+        joint[-1],
+        ax=jgrid.ax_joint,
+        use_gridspec=True,
+        fraction=0.1,
+        label='Density')
+    plt.subplots_adjust(left=0.1, right=0.8, top=0.9, bottom=0.1)
+    # get the current positions of the joint ax and the ax for the marginal x
+    pos_joint_ax = jgrid.ax_joint.get_position()
+    pos_marg_x_ax = jgrid.ax_marg_x.get_position()
+    # reposition the joint ax so it has the same width as the marginal x ax
+    jgrid.ax_joint.set_position([
+        pos_joint_ax.x0,
+        pos_joint_ax.y0,
+        pos_marg_x_ax.width,
+        pos_joint_ax.height
+    ])
+    # reposition the colorbar using new x positions and y
+    # positions of the joint ax
+    jgrid.figure.axes[-1].set_position([
+        .83,
+        pos_joint_ax.y0,
+        .07,
+        pos_joint_ax.height
+    ])
+
+    jgrid.ax_joint.set(**joint_axis_set)
+    if title:
+        jgrid.figure.suptitle(title)
+    if figsize:
+        jgrid.figure.set_figwidth(figsize[0])
+        jgrid.figure.set_figheight(figsize[1])
+
+    if corner_text:
+        jgrid.figure.text(
+            0.7, 0.9,
+            corner_text,
+            va='top', wrap=True)
+
+    return_dict = dict(marg_x=[x_hists, xbins, x_patches],
+                       marg_y=[y_hists, ybins, y_patches],
+                       joint=joint,
+                       cbar_ax=cbar_ax)
+
+    # if sub_ax_kwargs is not None:
+    #     sub_ax = jgrid.figure.add_axes(sub_ax_kwargs.pop('pos'))
+    #     sub_ax.hist2d(data[x], data[y], bins=[xbins, ybins],
+    #                   range=[x_range, y_range],
+    #                   cmin=1e-12, cmap=cmap, density=True, norm=norm)
+    #     sub_ax.set(**sub_ax_kwargs)
+    #     return_dict['sub_ax'] = sub_ax
+
+    return jgrid, return_dict
