@@ -297,6 +297,7 @@ class LztDataset:
         self.__aod_tchain = None
         self.ntuple_path = self.path / 'NTUPLE'
         self.__ntuple_tchain = None
+        self.__ntuple_rdf = None
         self.__hit_event_counter = None
         self.__esd_event_counter = None
 
@@ -511,12 +512,12 @@ class LztDataset:
         ROOT.TChain
             TChain with the AOD files
         """
-        if self.__ntuple_tchain is not None:
-            return self.__ntuple_tchain
-        self.__ntuple_tchain = ROOT.TChain("CollectionTree")
+        if self.__aod_tchain is not None:
+            return self.__aod_tchain
+        self.__aod_tchain = ROOT.TChain("CollectionTree")
         for filename in self.aod_files:
-            self.__ntuple_tchain.Add(str(filename))
-        return self.__ntuple_tchain
+            self.__aod_tchain.Add(str(filename))
+        return self.__aod_tchain
 
     def get_aod_tchain(self,  n_files: int = -1) -> ROOT.TChain:
         """
@@ -622,32 +623,20 @@ class LztDataset:
             self.__ntuple_tchain.Add(str(filename))
         return self.__ntuple_tchain
 
-    def get_ntuple_rdf(self, n_files: int = -1) -> ROOT.RDataFrame:
+    @property
+    def ntuple_rdf(self) -> ROOT.RDataFrame:
         """
-        Get the RDataFrame for the ntuple files
-
-        Parameters
-        ----------
-        n_files : int
-            Number of files to load.
-            If n_files < 0, loads everything
+        Get the RDataFrame for the NTUPLE files
 
         Returns
         -------
         ROOT.RDataFrame
-            RDataFrame for the ntuple
+            RDataFrame for the NTUPLE files
         """
-        if n_files > 0:
-            files = []
-            for i, filename in enumerate(self.ntuple_files):
-                if i >= n_files:
-                    break
-                files.append(str(filename))
-        else:
-            files = [str(filename) for filename
-                     in self.ntuple_files]
-        rdf = ROOT.RDataFrame("physics", files)
-        return rdf
+        if self.__ntuple_rdf is not None:
+            return self.__ntuple_rdf
+        self.__ntuple_rdf = ROOT.RDataFrame(self.ntuple_tchain)
+        return self.__ntuple_rdf
 
     def get_ntuple_pdf(self) -> pd.DataFrame:
         """
@@ -658,7 +647,7 @@ class LztDataset:
         pd.DataFrame
             DataFrame for the ntuple
         """
-        return rdf_to_pandas(self.get_ntuple_rdf())
+        return rdf_to_pandas(self.ntuple_rdf)
 
     def makedirs(self, directory: str) -> Path:
         """
