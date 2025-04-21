@@ -19,7 +19,7 @@ CPP_FILE_EXTENSIONS = [
 ]
 for file_ext in CPP_FILE_EXTENSIONS:
     for filename in CPP_DIR.glob(file_ext):
-        logging.debug(f'Decalring header file {filename}')
+        logging.debug(f'Declaring header file {filename}')
         text = filename.read_text()
         ROOT.gInterpreter.Declare(text)
 

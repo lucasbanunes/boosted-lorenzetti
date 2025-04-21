@@ -6,6 +6,7 @@
 namespace Lorenzetti{
 
     struct CaloDetDescriptor_t{
+
         int sampling;
         int detector;
         float eta;
@@ -22,7 +23,6 @@ namespace Lorenzetti{
         std::vector<float> edep_per_bunch;
         std::vector<float> tof;
         unsigned long int hash;
-        int cell_link;
         float z;
     };
 

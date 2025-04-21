@@ -12,4 +12,5 @@ services:
     environment:
     - LZT_DATA=${LZT_DATA}
     - LZT_REPO=${LZT_REPO}
+    # user: 1000:1000
     # - PYTHONPATH=${PYTHONPATH}

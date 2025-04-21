@@ -110,7 +110,10 @@ def plot_rings_profile(data: Union[pd.DataFrame, npt.NDArray[np.floating]],
     ax.axhline(0, color='black', linestyle='--')
     ax.legend()
     if 'title' not in ax_set_kwargs:
-        ax_set_kwargs['title'] = 'Rings $\\mu \\pm \\sigma$'
+        if normalize:
+            ax_set_kwargs['title'] = 'Normalized Rings $\\mu \\pm \\sigma$'
+        else:
+            ax_set_kwargs['title'] = 'Rings $\\mu \\pm \\sigma$'
     if 'xlabel' not in ax_set_kwargs:
         ax_set_kwargs['xlabel'] = 'Ring index'
     if 'ylabel' not in ax_set_kwargs:

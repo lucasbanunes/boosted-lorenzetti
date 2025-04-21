@@ -11,7 +11,7 @@ namespace Lorenzetti{
         float phi;
         float deta;
         float dphi;
-        int descriptor_link;
+        unsigned long int descriptor_link; // NOTE: lets use hash as link
     };
 }
 #endif

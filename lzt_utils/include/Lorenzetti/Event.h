@@ -9,7 +9,7 @@ namespace Lorenzetti {
         float avgmu;
     };
 
-    struct EventSeed_t{
+    struct Seed_t{
         int id;
         float e;
         float et;

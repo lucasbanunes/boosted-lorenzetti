@@ -1,7 +1,9 @@
 #ifndef XAOD_H
 #define XAOD_H
+
 #include <vector>
 #include <string>
+#include <ROOT/RVec.hxx>
 
 namespace xAOD{
 
@@ -11,7 +13,7 @@ namespace xAOD{
         float avgmu;
     };
 
-    struct EventSeed_t{
+    struct Seed_t{
         int id;
         float e;
         float et;
@@ -42,10 +44,11 @@ namespace xAOD{
         float phi;
         float deta;
         float dphi;
-        int descriptor_link;
+        unsigned long int descriptor_link; // NOTE: lets use hash as link
     };
 
     struct CaloDetDescriptor_t{
+
         int sampling;
         int detector;
         float eta;
@@ -62,7 +65,6 @@ namespace xAOD{
         std::vector<float> edep_per_bunch;
         std::vector<float> tof;
         unsigned long int hash;
-        int cell_link;
         float z;
     };
 
@@ -108,7 +110,8 @@ namespace xAOD{
   	  	float fracMax;
   	 	float lateralMom;
   	  	float longitudinalMom;
-        std::vector<int> cell_links;
+        std::vector<unsigned long int> cell_links;
+        int seed_link;
     };
 
     struct Electron_t{
@@ -117,7 +120,7 @@ namespace xAOD{
         float et;
         float eta;
         float phi;
-        std::vector<bool> decisions;
+        std::vector<bool> isEM;
     };
 }
 #endif
