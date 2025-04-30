@@ -12,4 +12,4 @@ echo "Running command: ${@} on lorenzetti_latest.sif"
 singularity exec \
 --nv \
 --bind /mnt/cern_data:/mnt/cern_data \
-$SIF_IMGS_DIR/lorenzetti_latest.sif "${@}"
+$SIF_IMGS_DIR/lorenzetti_v2.1.0.sif "${@}"
