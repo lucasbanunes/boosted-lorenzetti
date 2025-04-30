@@ -1,8 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=img-pull
-#SBATCH --partition=gpu
-#SBATCH --cpus-per-task=8
-#SBATCH -o /home/lucas.nunes/logs/tcc/%x-%j.out
+#SBATCH -o /home/lucas.nunes/logs/%x-%j.out
 
 # Launches dev environment
 # Usage
