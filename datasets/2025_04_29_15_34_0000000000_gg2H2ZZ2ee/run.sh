@@ -2,7 +2,7 @@ call_dir=$PWD
 n_workers=2 && \
 lzt_workspace=${HOME}/workspaces/lorenzetti && \
 lzt_repo="${HOME}/workspaces/lorenzetti/lorenzetti" && \
-nov=20 && \
+nov=10000 && \
 seed=365024 && \
 base_dir="${1}/2025_04_29_15_34_0000000000_gg2H2ZZ2ee" && \
 evt_dir="${base_dir}/EVT" && \
@@ -14,7 +14,7 @@ cd "${lzt_repo}/build" && source lzt_setup.sh && \
 # generate events with pythia
 mkdir -p "${base_dir}/EVT" && cd "${base_dir}/EVT" && \
 echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Started EVT sim" > "${base_dir}/started_EVT.log" && \
-(gen_overlapped_zee.py --output-file gg2H2ZZ2ee.EVT.root -nt $n_workers --nov $nov --seed $seed --events-per-job 10 -o "${base_dir}/EVT/gg2H2ZZ2ee.EVT.root" |& tee "${base_dir}/gg2H2ZZ2ee.EVT.log")  && \
+(gen_overlapped_zee.py --output-file gg2H2ZZ2ee.EVT.root -nt $n_workers --nov $nov --seed $seed --events-per-job 100 -o "${base_dir}/EVT/gg2H2ZZ2ee.EVT.root" |& tee "${base_dir}/gg2H2ZZ2ee.EVT.log")  && \
 echo "$(date -d "today" +"%Y/%m/%d %H-%M-%s") - Finished EVT sim" > "${base_dir}/finished_EVT.log"
 # generate hits around the truth particle seed
 mkdir -p $hit_dir && cd $hit_dir && \
