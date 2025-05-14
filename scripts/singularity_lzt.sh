@@ -3,6 +3,8 @@
 #SBATCH --partition=cpu-large
 #SBATCH --cpus-per-task=40
 #SBATCH -o /home/lucas.nunes/logs/lorenzetti/%x-%j.out
+# %x is the job name
+# %j is the job ID
 
 # Launches dev environment
 # Usage
