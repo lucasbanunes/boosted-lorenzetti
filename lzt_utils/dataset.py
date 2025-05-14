@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Iterator, Union, Dict, List, Any
 import awkward as ak
 import numpy as np
+import pyarrow as pa
+from functools import cached_property
 
 FILE_DIRECTORIES = [
     'EVT',
@@ -86,99 +88,115 @@ AOD_STRUCTS = [
 ]
 
 
-AOD_STRUCT_FIELDS = [
-    'CaloCellContainer_Cells.descriptor_link',
-    'CaloCellContainer_Cells.deta',
-    'CaloCellContainer_Cells.dphi',
-    'CaloCellContainer_Cells.e',
-    'CaloCellContainer_Cells.et',
-    'CaloCellContainer_Cells.eta',
-    'CaloCellContainer_Cells.phi',
-    'CaloCellContainer_Cells.tau',
-    'CaloClusterContainer_Clusters.cell_links',
-    'CaloClusterContainer_Clusters.deta',
-    'CaloClusterContainer_Clusters.dphi',
-    'CaloClusterContainer_Clusters.e',
-    'CaloClusterContainer_Clusters.e0',
-    'CaloClusterContainer_Clusters.e1',
-    'CaloClusterContainer_Clusters.e2',
-    'CaloClusterContainer_Clusters.e233',
-    'CaloClusterContainer_Clusters.e237',
-    'CaloClusterContainer_Clusters.e277',
-    'CaloClusterContainer_Clusters.e2tsts1',
-    'CaloClusterContainer_Clusters.e3',
-    'CaloClusterContainer_Clusters.ehad1',
-    'CaloClusterContainer_Clusters.ehad2',
-    'CaloClusterContainer_Clusters.ehad3',
-    'CaloClusterContainer_Clusters.emaxs1',
-    'CaloClusterContainer_Clusters.emaxs2',
-    'CaloClusterContainer_Clusters.eratio',
-    'CaloClusterContainer_Clusters.et',
-    'CaloClusterContainer_Clusters.eta',
-    'CaloClusterContainer_Clusters.etot',
-    'CaloClusterContainer_Clusters.f0',
-    'CaloClusterContainer_Clusters.f1',
-    'CaloClusterContainer_Clusters.f2',
-    'CaloClusterContainer_Clusters.f3',
-    'CaloClusterContainer_Clusters.fracMax',
-    'CaloClusterContainer_Clusters.lambdaCenter',
-    'CaloClusterContainer_Clusters.lateralMom',
-    'CaloClusterContainer_Clusters.longitudinalMom',
-    'CaloClusterContainer_Clusters.phi',
-    'CaloClusterContainer_Clusters.reta',
-    'CaloClusterContainer_Clusters.rhad',
-    'CaloClusterContainer_Clusters.rhad1',
-    'CaloClusterContainer_Clusters.rphi',
-    'CaloClusterContainer_Clusters.secondLambda',
-    'CaloClusterContainer_Clusters.secondR',
-    'CaloClusterContainer_Clusters.weta2',
-    'CaloDetDescriptorContainer_Cells.bc_duration',
-    'CaloDetDescriptorContainer_Cells.bcid_end',
-    'CaloDetDescriptorContainer_Cells.bcid_start',
-    'CaloDetDescriptorContainer_Cells.cell_link',
-    'CaloDetDescriptorContainer_Cells.deta',
-    'CaloDetDescriptorContainer_Cells.detector',
-    'CaloDetDescriptorContainer_Cells.dphi',
-    'CaloDetDescriptorContainer_Cells.e',
-    'CaloDetDescriptorContainer_Cells.edep',
-    'CaloDetDescriptorContainer_Cells.edep_per_bunch',
-    'CaloDetDescriptorContainer_Cells.eta',
-    'CaloDetDescriptorContainer_Cells.hash',
-    'CaloDetDescriptorContainer_Cells.phi',
-    'CaloDetDescriptorContainer_Cells.pulse',
-    'CaloDetDescriptorContainer_Cells.sampling',
-    'CaloDetDescriptorContainer_Cells.tau',
-    'CaloDetDescriptorContainer_Cells.tof',
-    'CaloDetDescriptorContainer_Cells.z',
-    'CaloRingsContainer_Rings.cluster_link',
-    'CaloRingsContainer_Rings.rings',
-    'ElectronContainer_Electrons.cluster_link',
-    'ElectronContainer_Electrons.decisions',
-    'ElectronContainer_Electrons.e',
-    'ElectronContainer_Electrons.et',
-    'ElectronContainer_Electrons.eta',
-    'ElectronContainer_Electrons.phi',
-    'EventInfoContainer_Events.avgmu',
-    'EventInfoContainer_Events.eventNumber',
-    'EventInfoContainer_Events.runNumber',
-    'EventSeedContainer_Seeds.e',
-    'EventSeedContainer_Seeds.et',
-    'EventSeedContainer_Seeds.eta',
-    'EventSeedContainer_Seeds.id',
-    'EventSeedContainer_Seeds.phi',
-    'TruthParticleContainer_Particles.e',
-    'TruthParticleContainer_Particles.et',
-    'TruthParticleContainer_Particles.eta',
-    'TruthParticleContainer_Particles.pdgid',
-    'TruthParticleContainer_Particles.phi',
-    'TruthParticleContainer_Particles.px',
-    'TruthParticleContainer_Particles.py',
-    'TruthParticleContainer_Particles.pz',
-    'TruthParticleContainer_Particles.seedid',
-    'TruthParticleContainer_Particles.vx',
-    'TruthParticleContainer_Particles.vy',
-    'TruthParticleContainer_Particles.vz'
-]
+AOD_ARROW_SCHEMA = pa.schema([
+    ('CaloCellContainer_Cells', pa.list_(pa.struct([
+        ('descriptor_link', pa.uint64()),
+        ('deta', pa.float32()),
+        ('dphi', pa.float32()),
+        ('e', pa.float32()),
+        ('et', pa.float32()),
+        ('eta', pa.float32()),
+        ('phi', pa.float32()),
+        ('tau', pa.float32())
+    ]))),
+    ('CaloClusterContainer_Clusters', pa.list_(pa.struct([
+        ('cell_links', pa.list_(pa.uint64())),
+        ('deta', pa.float32()),
+        ('dphi', pa.float32()),
+        ('e', pa.float32()),
+        ('e0', pa.float32()),
+        ('e1', pa.float32()),
+        ('e2', pa.float32()),
+        ('e233', pa.float32()),
+        ('e237', pa.float32()),
+        ('e277', pa.float32()),
+        ('e2tsts1', pa.float32()),
+        ('e3', pa.float32()),
+        ('ehad1', pa.float32()),
+        ('ehad2', pa.float32()),
+        ('ehad3', pa.float32()),
+        ('emaxs1', pa.float32()),
+        ('emaxs2', pa.float32()),
+        ('eratio', pa.float32()),
+        ('et', pa.float32()),
+        ('eta', pa.float32()),
+        ('etot', pa.float32()),
+        ('f0', pa.float32()),
+        ('f1', pa.float32()),
+        ('f2', pa.float32()),
+        ('f3', pa.float32()),
+        ('fracMax', pa.float32()),
+        ('lambdaCenter', pa.float32()),
+        ('lateralMom', pa.float32()),
+        ('longitudinalMom', pa.float32()),
+        ('phi', pa.float32()),
+        ('reta', pa.float32()),
+        ('rhad', pa.float32()),
+        ('rhad1', pa.float32()),
+        ('rphi', pa.float32()),
+        ('secondLambda', pa.float32()),
+        ('secondR', pa.float32()),
+        ('seed_link', pa.int32()),
+        ('weta2', pa.float32())
+    ]))),
+    ('CaloDetDescriptorContainer_Cells', pa.list_(pa.struct([
+        ('bc_duration', pa.float32()),
+        ('bcid_end', pa.int32()),
+        ('bcid_start', pa.int32()),
+        ('deta', pa.float32()),
+        ('detector', pa.int32()),
+        ('dphi', pa.float32()),
+        ('e', pa.float32()),
+        ('edep', pa.float32()),
+        ('edep_per_bunch', pa.list_(pa.float32())),
+        ('eta', pa.float32()),
+        ('hash', pa.uint64()),
+        ('phi', pa.float32()),
+        ('pulse', pa.list_(pa.float32())),
+        ('sampling', pa.int32()),
+        ('tau', pa.float32()),
+        ('tof', pa.list_(pa.float32())),
+        ('z', pa.float32())
+    ]))),
+    ('CaloRingsContainer_Rings', pa.list_(pa.struct([
+        ('cluster_link', pa.int32()),
+        ('rings', pa.list_(pa.float32()))
+    ]))),
+    ('ElectronContainer_Electrons', pa.list_(pa.struct([
+        ('cluster_link', pa.int32()),
+        ('e', pa.float32()),
+        ('et', pa.float32()),
+        ('eta', pa.float32()),
+        ('phi', pa.float32()),
+        ('isEM', pa.list_(pa.bool_())),
+    ]))),
+    ('EventInfoContainer_Events', pa.list_(pa.struct([
+        ('avgmu', pa.float32()),
+        ('eventNumber', pa.float32()),
+        ('runNumber', pa.float32())
+    ]))),
+    ('SeedContainer_Seeds', pa.list_(pa.struct([
+        ('e', pa.float32()),
+        ('et', pa.float32()),
+        ('eta', pa.float32()),
+        ('id', pa.int32()),
+        ('phi', pa.float32())
+    ]))),
+    ('TruthParticleContainer_Particles', pa.list_(pa.struct([
+        ('e', pa.float32()),
+        ('et', pa.float32()),
+        ('eta', pa.float32()),
+        ('pdgid', pa.int32()),
+        ('phi', pa.float32()),
+        ('px', pa.float32()),
+        ('py', pa.float32()),
+        ('pz', pa.float32()),
+        ('seedid', pa.int32()),
+        ('vx', pa.float32()),
+        ('vy', pa.float32()),
+        ('vz', pa.float32())
+    ])))
+])
 
 
 def esd_rdf_to_ak(rdf: ROOT.RDataFrame,
@@ -321,7 +339,7 @@ class LztDataset:
         """
         return self.hit_path.glob('*.root')
 
-    @property
+    @cached_property
     def hit_event_counter(self) -> Dict[str, int]:
         """
         Number of completed HIT events
@@ -403,15 +421,10 @@ class LztDataset:
                     self.__esd_event_counter[key])
         return self.__esd_event_counter
 
-    def get_esd_tchain(self,  n_files: int = -1) -> ROOT.TChain:
+    @cached_property
+    def esd_tchain(self) -> ROOT.TChain:
         """
         Get a TChain with the ESD files
-
-        Parameters
-        ----------
-        n_files : int
-            Number of files to load.
-            If n_files < 0, loads everything
 
         Returns
         -------
@@ -420,37 +433,20 @@ class LztDataset:
         """
         chain = ROOT.TChain("CollectionTree")
         for i, filename in enumerate(self.esd_files):
-            if n_files >= 0 and i >= n_files:
-                break
             chain.Add(str(filename))
         return chain
-
-    def get_esd_rdf(self, n_files: int = -1) -> ROOT.RDataFrame:
+    
+    @cached_property
+    def esd_rdf(self) -> ROOT.RDataFrame:
         """
         Get the RDataFrame for the esd files
-
-        Parameters
-        ----------
-        n_files : int
-            Number of files to load.
-            If n_files < 0, loads everything
 
         Returns
         -------
         ROOT.RDataFrame
-            RDataFrame for the esd
+            RDataFrame for the esd files
         """
-        if n_files > 0:
-            files = []
-            for i, filename in enumerate(self.esd_files):
-                if i >= n_files:
-                    break
-                files.append(str(filename))
-        else:
-            files = [str(filename) for filename
-                     in self.esd_files]
-        rdf = ROOT.RDataFrame("CollectionTree", files)
-        return rdf
+        return ROOT.RDataFrame(self.esd_tchain)
 
     def get_esd_ak(self,
                    n_files: int = -1,
@@ -502,7 +498,7 @@ class LztDataset:
         """
         return self.aod_path.glob('*.root')
 
-    @property
+    @cached_property
     def aod_tchain(self) -> ROOT.TChain:
         """
         Get a TChain with the AOD files
@@ -519,54 +515,17 @@ class LztDataset:
             self.__aod_tchain.Add(str(filename))
         return self.__aod_tchain
 
-    def get_aod_tchain(self,  n_files: int = -1) -> ROOT.TChain:
+    @cached_property
+    def aod_rdf(self) -> ROOT.RDataFrame:
         """
-        Get a TChain with the AOD files
-
-        Parameters
-        ----------
-        n_files : int
-            Number of files to load.
-            If n_files < 0, loads everything
-
-        Returns
-        -------
-        ROOT.TChain
-            TChain with the AOD files
-        """
-        chain = ROOT.TChain("CollectionTree")
-        for i, filename in enumerate(self.aod_files):
-            if n_files >= 0 and i >= n_files:
-                break
-            chain.Add(str(filename))
-        return chain
-
-    def get_aod_rdf(self, n_files: int = -1) -> ROOT.RDataFrame:
-        """
-        Get the RDataFrame for the aod files
-
-        Parameters
-        ----------
-        n_files : int
-            Number of files to load.
-            If n_files < 0, loads everything
+        Get the RDataFrame for the AOD files
 
         Returns
         -------
         ROOT.RDataFrame
-            RDataFrame for the aod
+            RDataFrame for the AOD files
         """
-        if n_files > 0:
-            files = []
-            for i, filename in enumerate(self.aod_files):
-                if i >= n_files:
-                    break
-                files.append(str(filename))
-        else:
-            files = [str(filename) for filename
-                     in self.aod_files]
-        rdf = ROOT.RDataFrame("CollectionTree", files)
-        return rdf
+        return ROOT.RDataFrame(self.aod_tchain)
 
     def get_aod_ak(self,
                    n_files: int = -1,
@@ -606,7 +565,7 @@ class LztDataset:
         """
         return self.ntuple_path.glob('*.root')
 
-    @property
+    @cached_property
     def ntuple_tchain(self) -> ROOT.TChain:
         """
         Get a TChain with the NTUPLE files
@@ -623,7 +582,7 @@ class LztDataset:
             self.__ntuple_tchain.Add(str(filename))
         return self.__ntuple_tchain
 
-    @property
+    @cached_property
     def ntuple_rdf(self) -> ROOT.RDataFrame:
         """
         Get the RDataFrame for the NTUPLE files
@@ -633,10 +592,7 @@ class LztDataset:
         ROOT.RDataFrame
             RDataFrame for the NTUPLE files
         """
-        if self.__ntuple_rdf is not None:
-            return self.__ntuple_rdf
-        self.__ntuple_rdf = ROOT.RDataFrame(self.ntuple_tchain)
-        return self.__ntuple_rdf
+        return ROOT.RDataFrame(self.ntuple_tchain)
 
     def get_ntuple_pdf(self) -> pd.DataFrame:
         """
