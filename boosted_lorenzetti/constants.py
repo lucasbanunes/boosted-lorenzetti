@@ -12,4 +12,4 @@ RINGS_LAYERS = OrderedDict(
     HAD3=list(range(96, 100)),
 )
 
-RINGS_LIMITS = [8 ,72, 80, 88, 92, 96]
+RINGS_LIMITS = [8, 72, 80, 88, 92, 96]

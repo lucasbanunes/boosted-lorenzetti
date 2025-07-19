@@ -4,7 +4,7 @@ import json
 from boosted_lorenzetti.root import rdf_to_pandas, rdf_column_names
 import pandas as pd
 from pathlib import Path
-from typing import Iterator, Union, Dict, List, Any
+from typing import Iterator, Dict, List, Any
 import awkward as ak
 import numpy as np
 import pyarrow as pa
