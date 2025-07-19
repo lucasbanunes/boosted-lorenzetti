@@ -25,7 +25,7 @@ for file_ext in CPP_FILE_EXTENSIONS:
 
 
 # LZT_UTILS_INCLUDE_PATHS = [
-#     "/root/workspaces/lorenzetti/boosted-lorenzetti/lzt_utils/include"
+#     "/root/workspaces/lorenzetti/boosted-lorenzetti/boosted_lorenzetti/include"
 # ]
 
 # INCLUDE_PATHS = LZT_UTILS_INCLUDE_PATHS + [

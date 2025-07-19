@@ -1,7 +1,7 @@
 import os
 import ROOT
 import json
-from lzt_utils.root import rdf_to_pandas, rdf_column_names
+from boosted_lorenzetti.root import rdf_to_pandas, rdf_column_names
 import pandas as pd
 from pathlib import Path
 from typing import Iterator, Union, Dict, List, Any
@@ -200,7 +200,7 @@ AOD_ARROW_SCHEMA = pa.schema([
 
 
 def esd_rdf_to_ak(rdf: ROOT.RDataFrame,
-                  columns: List[str] = None,
+                  columns: List[str] | None = None,
                   ak_kwargs: Dict[str, Any] = {}
                   ) -> ak.Array:
     if columns is None:
@@ -234,7 +234,7 @@ def esd_rdf_to_ak(rdf: ROOT.RDataFrame,
 
 
 def aod_rdf_to_ak(rdf: ROOT.RDataFrame,
-                  columns: List[str] = None,
+                  columns: List[str] | None = None,
                   ak_kwargs: Dict[str, Any] = {}
                   ) -> ak.Array:
     if columns is None:
@@ -293,8 +293,8 @@ class LztDataset:
     """
 
     def __init__(self,
-                 path: Union[str, Path],
-                 label: str = None,
+                 path: str | Path,
+                 label: str | None = None,
                  **kwargs):
         """
         Parameters
@@ -306,7 +306,8 @@ class LztDataset:
         """
         if isinstance(path, str):
             self.path = Path(path)
-        self.path = path
+        else:
+            self.path = path
         self.label = label
         self.evt_path = self.path / 'EVT'
         self.hit_path = self.path / 'HIT'
@@ -435,7 +436,7 @@ class LztDataset:
         for i, filename in enumerate(self.esd_files):
             chain.Add(str(filename))
         return chain
-    
+
     @cached_property
     def esd_rdf(self) -> ROOT.RDataFrame:
         """
@@ -448,43 +449,43 @@ class LztDataset:
         """
         return ROOT.RDataFrame(self.esd_tchain)
 
-    def get_esd_ak(self,
-                   n_files: int = -1,
-                   columns: List[str] = None,
-                   ak_kwargs: Dict[str, Any] = {}
-                   ) -> ak.Array:
-        """
-        Get the awkward array for the esd files.
+    # def get_esd_ak(self,
+    #                n_files: int = -1,
+    #                columns: List[str] | None = None,
+    #                ak_kwargs: Dict[str, Any] = {}
+    #                ) -> ak.Array:
+    #     """
+    #     Get the awkward array for the esd files.
 
-        Parameters
-        ----------
-        n_files : int, optional
-            Number of file to load.
-            If n_files < 0, loads everything, by default -1
-        columns : List[str], optional
-            Columns to load, by default None
-        ak_kwargs : Dict[str, Any], optional
-            Kwargs for awkward.from_rdataframe, by default {}
+    #     Parameters
+    #     ----------
+    #     n_files : int, optional
+    #         Number of file to load.
+    #         If n_files < 0, loads everything, by default -1
+    #     columns : List[str], optional
+    #         Columns to load, by default None
+    #     ak_kwargs : Dict[str, Any], optional
+    #         Kwargs for awkward.from_rdataframe, by default {}
 
-        Returns
-        -------
-        ak.Array
-            Awkward array for the esd
-        """
-        esd_rdf = self.get_esd_rdf(n_files)
-        esd_ak = ak.from_rdataframe(esd_rdf, columns=columns,
-                                    **ak_kwargs)
-        for field in esd_ak.fields:
-            # The events from EventInfoContainer are always a list
-            # with one element, so we extract the first element.
-            if field == 'EventInfoContainer_Events.eventNumber':
-                esd_ak[field] = ak.values_astype(
-                    ak.firsts(esd_ak[field]), np.int32)
-            elif field == 'EventInfoContainer_Events.runNumber':
-                esd_ak[field] = ak.values_astype(
-                    ak.firsts(esd_ak[field]), np.int32)
-            elif field.startswith('EventInfoContainer_Events'):
-                esd_ak[field] = ak.firsts(esd_ak[field])
+    #     Returns
+    #     -------
+    #     ak.Array
+    #         Awkward array for the esd
+    #     """
+    #     esd_rdf = self.get_esd_rdf(n_files)
+    #     esd_ak = ak.from_rdataframe(esd_rdf, columns=columns,
+    #                                 **ak_kwargs)
+    #     for field in esd_ak.fields:
+    #         # The events from EventInfoContainer are always a list
+    #         # with one element, so we extract the first element.
+    #         if field == 'EventInfoContainer_Events.eventNumber':
+    #             esd_ak[field] = ak.values_astype(
+    #                 ak.firsts(esd_ak[field]), np.int32)
+    #         elif field == 'EventInfoContainer_Events.runNumber':
+    #             esd_ak[field] = ak.values_astype(
+    #                 ak.firsts(esd_ak[field]), np.int32)
+    #         elif field.startswith('EventInfoContainer_Events'):
+    #             esd_ak[field] = ak.firsts(esd_ak[field])
 
     @property
     def aod_files(self) -> Iterator[Path]:
@@ -527,31 +528,31 @@ class LztDataset:
         """
         return ROOT.RDataFrame(self.aod_tchain)
 
-    def get_aod_ak(self,
-                   n_files: int = -1,
-                   columns: List[str] = None,
-                   ak_kwargs: Dict[str, Any] = {}
-                   ) -> ak.Array:
-        """
-        Get the awkward array for the aod files.
+    # def get_aod_ak(self,
+    #                n_files: int = -1,
+    #                columns: List[str] | None = None,
+    #                ak_kwargs: Dict[str, Any] = {}
+    #                ) -> ak.Array:
+    #     """
+    #     Get the awkward array for the aod files.
 
-        Parameters
-        ----------
-        n_files : int, optional
-            Number of file to load.
-            If n_files < 0, loads everything, by default -1
-        columns : List[str], optional
-            Columns to load, by default None
-        ak_kwargs : Dict[str, Any], optional
-            Kwargs for awkward.from_rdataframe, by default {}
+    #     Parameters
+    #     ----------
+    #     n_files : int, optional
+    #         Number of file to load.
+    #         If n_files < 0, loads everything, by default -1
+    #     columns : List[str], optional
+    #         Columns to load, by default None
+    #     ak_kwargs : Dict[str, Any], optional
+    #         Kwargs for awkward.from_rdataframe, by default {}
 
-        Returns
-        -------
-        ak.Array
-            Awkward array for the aod
-        """
-        aod_rdf = self.get_aod_rdf(n_files)
-        return aod_rdf_to_ak(aod_rdf, columns=columns, ak_kwargs=ak_kwargs)
+    #     Returns
+    #     -------
+    #     ak.Array
+    #         Awkward array for the aod
+    #     """
+    #     aod_rdf = self.get_aod_rdf(n_files)
+    #     return aod_rdf_to_ak(aod_rdf, columns=columns, ak_kwargs=ak_kwargs)
 
     @property
     def ntuple_files(self) -> Iterator[Path]:
