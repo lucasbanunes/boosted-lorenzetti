@@ -1,14 +1,12 @@
 import os
 import ROOT
 import json
-from boosted_lorenzetti.root import rdf_to_pandas, rdf_column_names
 import pandas as pd
 from pathlib import Path
-from typing import Iterator, Dict, List, Any
-import awkward as ak
-import numpy as np
-import pyarrow as pa
+from typing import Iterator, Dict
 from functools import cached_property
+
+from . import ntuple
 
 FILE_DIRECTORIES = [
     'EVT',
@@ -74,197 +72,6 @@ ESD_STRUCT_FILEDS = [
     'TruthParticleContainer_Particles.vy',
     'TruthParticleContainer_Particles.vz'
 ]
-
-
-AOD_STRUCTS = [
-    'CaloCellContainer_Cells',
-    'CaloClusterContainer_Clusters',
-    'CaloDetDescriptorContainer_Cells',
-    'CaloRingsContainer_Rings',
-    'ElectronContainer_Electrons',
-    'EventInfoContainer_Events',
-    'EventSeedContainer_Seeds',
-    'TruthParticleContainer_Particles'
-]
-
-
-AOD_ARROW_SCHEMA = pa.schema([
-    ('CaloCellContainer_Cells', pa.list_(pa.struct([
-        ('descriptor_link', pa.uint64()),
-        ('deta', pa.float32()),
-        ('dphi', pa.float32()),
-        ('e', pa.float32()),
-        ('et', pa.float32()),
-        ('eta', pa.float32()),
-        ('phi', pa.float32()),
-        ('tau', pa.float32())
-    ]))),
-    ('CaloClusterContainer_Clusters', pa.list_(pa.struct([
-        ('cell_links', pa.list_(pa.uint64())),
-        ('deta', pa.float32()),
-        ('dphi', pa.float32()),
-        ('e', pa.float32()),
-        ('e0', pa.float32()),
-        ('e1', pa.float32()),
-        ('e2', pa.float32()),
-        ('e233', pa.float32()),
-        ('e237', pa.float32()),
-        ('e277', pa.float32()),
-        ('e2tsts1', pa.float32()),
-        ('e3', pa.float32()),
-        ('ehad1', pa.float32()),
-        ('ehad2', pa.float32()),
-        ('ehad3', pa.float32()),
-        ('emaxs1', pa.float32()),
-        ('emaxs2', pa.float32()),
-        ('eratio', pa.float32()),
-        ('et', pa.float32()),
-        ('eta', pa.float32()),
-        ('etot', pa.float32()),
-        ('f0', pa.float32()),
-        ('f1', pa.float32()),
-        ('f2', pa.float32()),
-        ('f3', pa.float32()),
-        ('fracMax', pa.float32()),
-        ('lambdaCenter', pa.float32()),
-        ('lateralMom', pa.float32()),
-        ('longitudinalMom', pa.float32()),
-        ('phi', pa.float32()),
-        ('reta', pa.float32()),
-        ('rhad', pa.float32()),
-        ('rhad1', pa.float32()),
-        ('rphi', pa.float32()),
-        ('secondLambda', pa.float32()),
-        ('secondR', pa.float32()),
-        ('seed_link', pa.int32()),
-        ('weta2', pa.float32())
-    ]))),
-    ('CaloDetDescriptorContainer_Cells', pa.list_(pa.struct([
-        ('bc_duration', pa.float32()),
-        ('bcid_end', pa.int32()),
-        ('bcid_start', pa.int32()),
-        ('deta', pa.float32()),
-        ('detector', pa.int32()),
-        ('dphi', pa.float32()),
-        ('e', pa.float32()),
-        ('edep', pa.float32()),
-        ('edep_per_bunch', pa.list_(pa.float32())),
-        ('eta', pa.float32()),
-        ('hash', pa.uint64()),
-        ('phi', pa.float32()),
-        ('pulse', pa.list_(pa.float32())),
-        ('sampling', pa.int32()),
-        ('tau', pa.float32()),
-        ('tof', pa.list_(pa.float32())),
-        ('z', pa.float32())
-    ]))),
-    ('CaloRingsContainer_Rings', pa.list_(pa.struct([
-        ('cluster_link', pa.int32()),
-        ('rings', pa.list_(pa.float32()))
-    ]))),
-    ('ElectronContainer_Electrons', pa.list_(pa.struct([
-        ('cluster_link', pa.int32()),
-        ('e', pa.float32()),
-        ('et', pa.float32()),
-        ('eta', pa.float32()),
-        ('phi', pa.float32()),
-        ('isEM', pa.list_(pa.bool_())),
-    ]))),
-    ('EventInfoContainer_Events', pa.list_(pa.struct([
-        ('avgmu', pa.float32()),
-        ('eventNumber', pa.float32()),
-        ('runNumber', pa.float32())
-    ]))),
-    ('SeedContainer_Seeds', pa.list_(pa.struct([
-        ('e', pa.float32()),
-        ('et', pa.float32()),
-        ('eta', pa.float32()),
-        ('id', pa.int32()),
-        ('phi', pa.float32())
-    ]))),
-    ('TruthParticleContainer_Particles', pa.list_(pa.struct([
-        ('e', pa.float32()),
-        ('et', pa.float32()),
-        ('eta', pa.float32()),
-        ('pdgid', pa.int32()),
-        ('phi', pa.float32()),
-        ('px', pa.float32()),
-        ('py', pa.float32()),
-        ('pz', pa.float32()),
-        ('seedid', pa.int32()),
-        ('vx', pa.float32()),
-        ('vy', pa.float32()),
-        ('vz', pa.float32())
-    ])))
-])
-
-
-def esd_rdf_to_ak(rdf: ROOT.RDataFrame,
-                  columns: List[str] | None = None,
-                  ak_kwargs: Dict[str, Any] = {}
-                  ) -> ak.Array:
-    if columns is None:
-        columns = ESD_STRUCT_FILEDS
-    rdf_ak = ak.from_rdataframe(rdf, columns=columns,
-                                **ak_kwargs)
-    rdf_ak_dict = {
-        key: {} for key in ESD_STRUCTS
-    }
-    to_int = [
-        'EventInfoContainer_Events.eventNumber'
-    ]
-
-    for field in rdf_ak.fields:
-        # The events from EventInfoContainer are always a list
-        # with one element, so we extract the first element.
-        main_field, subfield = field.split('.')
-        if main_field == 'EventInfoContainer_Events':
-            rdf_ak_dict[main_field][subfield] = ak.firsts(rdf_ak[field])
-        else:
-            rdf_ak_dict[main_field][subfield] = rdf_ak[field]
-
-        if field in to_int:
-            rdf_ak_dict[main_field][subfield] = ak.values_astype(
-                rdf_ak_dict[main_field][subfield], np.int32)
-
-    rdf_ak = ak.Array({key: ak.zip(val)
-                       for key, val in rdf_ak_dict.items()
-                       if val})
-    return rdf_ak
-
-
-def aod_rdf_to_ak(rdf: ROOT.RDataFrame,
-                  columns: List[str] | None = None,
-                  ak_kwargs: Dict[str, Any] = {}
-                  ) -> ak.Array:
-    if columns is None:
-        columns = rdf_column_names(rdf)
-    rdf_ak = ak.from_rdataframe(rdf, columns=columns,
-                                **ak_kwargs)
-    rdf_ak_dict = {
-        key: {} for key in AOD_STRUCTS
-    }
-    to_int = [
-        'EventInfoContainer_Events.eventNumber'
-    ]
-
-    for field in rdf_ak.fields:
-        # The events from EventInfoContainer are always a list
-        # with one element, so we extract the first element.
-        main_field, subfield = field.split('.')
-        if main_field == 'EventInfoContainer_Events':
-            rdf_ak_dict[main_field][subfield] = ak.firsts(rdf_ak[field])
-        else:
-            rdf_ak_dict[main_field][subfield] = rdf_ak[field]
-
-        if field in to_int:
-            rdf_ak_dict[main_field][subfield] = ak.values_astype(
-                rdf_ak_dict[main_field][subfield], np.int32)
-
-    rdf_ak = ak.Array({key: ak.zip(val)
-                       for key, val in rdf_ak_dict.items()
-                       if val})
-    return rdf_ak
 
 
 class LztDataset:
@@ -433,7 +240,7 @@ class LztDataset:
             TChain with the ESD files
         """
         chain = ROOT.TChain("CollectionTree")
-        for i, filename in enumerate(self.esd_files):
+        for _, filename in enumerate(self.esd_files):
             chain.Add(str(filename))
         return chain
 
@@ -448,44 +255,6 @@ class LztDataset:
             RDataFrame for the esd files
         """
         return ROOT.RDataFrame(self.esd_tchain)
-
-    # def get_esd_ak(self,
-    #                n_files: int = -1,
-    #                columns: List[str] | None = None,
-    #                ak_kwargs: Dict[str, Any] = {}
-    #                ) -> ak.Array:
-    #     """
-    #     Get the awkward array for the esd files.
-
-    #     Parameters
-    #     ----------
-    #     n_files : int, optional
-    #         Number of file to load.
-    #         If n_files < 0, loads everything, by default -1
-    #     columns : List[str], optional
-    #         Columns to load, by default None
-    #     ak_kwargs : Dict[str, Any], optional
-    #         Kwargs for awkward.from_rdataframe, by default {}
-
-    #     Returns
-    #     -------
-    #     ak.Array
-    #         Awkward array for the esd
-    #     """
-    #     esd_rdf = self.get_esd_rdf(n_files)
-    #     esd_ak = ak.from_rdataframe(esd_rdf, columns=columns,
-    #                                 **ak_kwargs)
-    #     for field in esd_ak.fields:
-    #         # The events from EventInfoContainer are always a list
-    #         # with one element, so we extract the first element.
-    #         if field == 'EventInfoContainer_Events.eventNumber':
-    #             esd_ak[field] = ak.values_astype(
-    #                 ak.firsts(esd_ak[field]), np.int32)
-    #         elif field == 'EventInfoContainer_Events.runNumber':
-    #             esd_ak[field] = ak.values_astype(
-    #                 ak.firsts(esd_ak[field]), np.int32)
-    #         elif field.startswith('EventInfoContainer_Events'):
-    #             esd_ak[field] = ak.firsts(esd_ak[field])
 
     @property
     def aod_files(self) -> Iterator[Path]:
@@ -527,32 +296,6 @@ class LztDataset:
             RDataFrame for the AOD files
         """
         return ROOT.RDataFrame(self.aod_tchain)
-
-    # def get_aod_ak(self,
-    #                n_files: int = -1,
-    #                columns: List[str] | None = None,
-    #                ak_kwargs: Dict[str, Any] = {}
-    #                ) -> ak.Array:
-    #     """
-    #     Get the awkward array for the aod files.
-
-    #     Parameters
-    #     ----------
-    #     n_files : int, optional
-    #         Number of file to load.
-    #         If n_files < 0, loads everything, by default -1
-    #     columns : List[str], optional
-    #         Columns to load, by default None
-    #     ak_kwargs : Dict[str, Any], optional
-    #         Kwargs for awkward.from_rdataframe, by default {}
-
-    #     Returns
-    #     -------
-    #     ak.Array
-    #         Awkward array for the aod
-    #     """
-    #     aod_rdf = self.get_aod_rdf(n_files)
-    #     return aod_rdf_to_ak(aod_rdf, columns=columns, ak_kwargs=ak_kwargs)
 
     @property
     def ntuple_files(self) -> Iterator[Path]:
@@ -604,7 +347,7 @@ class LztDataset:
         pd.DataFrame
             DataFrame for the ntuple
         """
-        return rdf_to_pandas(self.ntuple_rdf)
+        return ntuple.to_pdf(self.ntuple_files)
 
     def makedirs(self, directory: str) -> Path:
         """

@@ -90,7 +90,7 @@ def train_fold(
     dataset_paths: List[Path],
     batch_size: int = 32,
     tracking_uri: str | None = None,
-    experiment_name: str = 'electron-classification',
+    experiment_name: str = 'boosted-lorenzetti',
     seed: int = 42,
     feature_cols: List[str] = [f'ring_{i}' for i in range(N_RINGS)],
     label_cols: List[str] = ['label'],

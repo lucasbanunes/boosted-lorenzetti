@@ -1,9 +1,11 @@
 import pandas as pd
 import pyarrow as pa
-from typing import Dict
+from typing import Dict, Iterable
 from pathlib import Path
 import ROOT
 
+
+RINGS_COL = 'cl_rings'
 
 PYARROW_SCHEMA = pa.schema([
     ('EventNumber', pa.int32()),
@@ -135,6 +137,36 @@ def event_as_python(event) -> Dict[str, float]:
     }
 
 
+def to_pdf(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChain,
+           ttree_name: str = 'physics') -> pd.DataFrame:
+    """
+    Convert a single ntuple root file to a pandas DataFrame.
+
+    Parameters
+    ----------
+    input_file : str | Path
+        The path to the input ntuple file.
+    output_file : Path | str
+        The path where the output DataFrame will be saved.
+    """
+    if not isinstance(input_file, ROOT.TChain):
+        if isinstance(input_file, Path):
+            input_file = [str(input_file)]
+        elif isinstance(input_file, str):
+            input_file = [input_file]
+        chain = ROOT.TChain(ttree_name)
+        for file in input_file:
+            if isinstance(file, Path):
+                file = str(file)
+            chain.Add(file)
+    data = {col_name: [] for col_name in FIELDS}
+    for event in chain:
+        event_data = event_as_python(event)
+        for col_name, value in event_data.items():
+            data[col_name].append(value)
+    return pd.DataFrame(data)
+
+
 def to_parquet(input_file: str | Path,
                output_file: Path | str,
                ttree_name: str = 'physics') -> None:
@@ -148,16 +180,4 @@ def to_parquet(input_file: str | Path,
     output_file : Path | str
         The path where the output parquet file will be saved.
     """
-    if isinstance(input_file, Path):
-        input_file = str(input_file)
-    data = {col_name: [] for col_name in FIELDS}
-    chain = ROOT.TChain(ttree_name)
-    chain.Add(input_file)
-    for event in chain:
-        event_data = event_as_python(event)
-        for col_name, value in event_data.items():
-            data[col_name].append(value)
-    df = pd.DataFrame(data)
-    df.to_parquet(output_file, index=False, compression='gzip')
-    # table = pa.Table.from_pydict(data, schema=PYARROW_SCHEMA)
-    # pq.write_table(table, output_file, compression='gzip')
+    to_pdf(input_file, ttree_name).to_parquet(output_file, index=False, compression='gzip')
