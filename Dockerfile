@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get upgrade -y && apt-get clean
 # It takes a while to install this, implemented separately for caching
-RUN apt-get install -y dvipng texlive-latex-extra texlive-fonts-recommended && apt-get clean
+RUN apt-get install -y dvipng texlive-latex-extra texlive-fonts-recommended git && apt-get clean
 
 WORKDIR /root
 COPY requirements.txt requirements.txt
