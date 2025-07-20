@@ -17,11 +17,13 @@ from mlflow.models import infer_signature
 import numpy as np
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.model_selection import StratifiedKFold
+from pydantic import BaseModel
+import json
 
 from ..data import tensor_dataset_from_df
 from ..constants import N_RINGS
 from ..dataset.file_dataset import FileDataset
-from ..metrics import sp_index
+from ..metrics import sp_index, ringer_norm1
 
 
 class MLP(L.LightningModule):
@@ -85,7 +87,8 @@ class MLP(L.LightningModule):
 
     def get_loss(self, logits: torch.Tensor,
                  y: torch.Tensor) -> torch.Tensor:
-        weights = torch.empty(logits.shape, dtype=torch.float32, device=self.device)
+        weights = torch.empty(
+            y.shape, dtype=torch.float32, device=self.device)
         weights[y == 1] = self.class_weights[1]
         weights[y == 0] = self.class_weights[0]
         return torch.mean(weights*self.loss_func(logits, y))
@@ -99,7 +102,8 @@ class MLP(L.LightningModule):
         self.log("train_loss", loss, on_epoch=True, prog_bar=True)
         prob = torch.sigmoid(logits)
         batch_values = self.train_metrics(prob, y)
-        acc, max_sp, roc_auc, max_sp_tpr, max_sp_fpr, _ = self.get_metrics(batch_values)
+        acc, max_sp, roc_auc, max_sp_tpr, max_sp_fpr, _ = self.get_metrics(
+            batch_values)
         self.log('train_acc', acc, on_epoch=True, prog_bar=True)
         self.log("train_max_sp", max_sp, on_epoch=True, prog_bar=True)
         self.log("train_roc_auc", roc_auc, on_epoch=True, prog_bar=True)
@@ -123,7 +127,8 @@ class MLP(L.LightningModule):
 
     def on_validation_epoch_end(self):
         metric_values = self.val_metrics.compute()
-        acc, max_sp, roc_auc, max_sp_tpr, max_sp_fpr, max_sp_thresh = self.get_metrics(metric_values)
+        acc, max_sp, roc_auc, max_sp_tpr, max_sp_fpr, max_sp_thresh = self.get_metrics(
+            metric_values)
         self.log('val_acc', acc, on_epoch=True, prog_bar=True)
         self.log("val_max_sp", max_sp, on_epoch=True, prog_bar=True)
         self.log("val_roc_auc", roc_auc, on_epoch=True, prog_bar=True)
@@ -142,6 +147,194 @@ def parse_list(list_str: str) -> List[Any]:
     return [item.strip() for item in list_str[1:-1].replace("'", '').split(', ')]
 
 
+class TrainingJob(BaseModel):
+    dataset_path: Path
+    dims: List[int]
+    activation: str = 'relu'
+    df_name: str = 'data'
+    batch_size: int = 32
+    seed: int | None = None
+    feature_cols: List[str] = [f'ring_{i}' for i in range(N_RINGS)]
+    label_cols: List[str] = ['label']
+    init: int = 0
+    fold: int = 0
+    run_id: str | None = None
+    job_name: str = 'MLP Training Job'
+    accelerator: str = 'cpu'
+    patience: int = 3
+    checkpoints_dir: Path = Path('checkpoints/')
+
+    def model_post_init(self, context):
+        super().model_post_init(context)
+
+        if self.seed is None:
+            self.seed = np.random.randint(np.iinfo(np.int32).max - 10)
+
+        if self.dims[0] != len(self.feature_cols):
+            raise ValueError(
+                f'Input dimension {self.dims[0]} does not match feature columns {len(self.feature_cols)}')
+
+        if self.dims[-1] != 1:
+            raise ValueError(f'Output dimension {self.dims[-1]} must be 1')
+
+    @classmethod
+    def from_mlflow(cls, run_id: str) -> 'TrainingJob':
+        client = mlflow.MlflowClient()
+        run = client.get_run(run_id)
+        params = run.data.params
+        return cls(
+            dataset_path=Path(params['dataset_path']),
+            dims=json.loads(params['dims']),
+            activation=params['activation'],
+            df_name=params['df_name'],
+            batch_size=int(params['batch_size']),
+            seed=int(params['seed']),
+            feature_cols=json.loads(params['feature_cols']),
+            label_cols=json.loads(params['label_cols']),
+            init=int(params['init']),
+            fold=int(params['fold']),
+            run_id=run_id,
+            job_name=params['job_name'],
+            accelerator=params['accelerator'],
+            patience=int(params['patience']),
+            checkpoints_dir=Path(params['checkpoints_dir'])
+        )
+
+    def model_dump_mlflow(self) -> str:
+        tags = {
+            'init': self.init,
+            'fold': self.fold,
+            'model': 'MLP',
+        }
+
+        params = dict(
+            dataset_path=self.dataset_path,
+            dims=json.dumps(self.dims),
+            activation=self.activation,
+            df_name=self.df_name,
+            batch_size=self.batch_size,
+            seed=self.seed,
+            feature_cols=json.dumps(self.feature_cols),
+            label_cols=json.dumps(self.label_cols),
+            init=self.init,
+            fold=self.fold,
+            job_name=self.job_name,
+            accelerator=self.accelerator,
+            patience=self.patience,
+            checkpoints_dir=str(self.checkpoints_dir)
+        )
+
+        with mlflow.start_run(run_name=self.job_name,
+                              tags=tags) as run:
+            mlflow.log_params(params)
+        self.run_id = run.info.run_id
+        return self.run_id
+
+    def _run(self, experiment_name: str, tracking_uri: str | None = None):
+        file_dataset = FileDataset(self.dataset_path)
+        load_cols = self.feature_cols + self.label_cols + ['fold', 'id']
+        data_df = file_dataset.get_df(self.df_name,
+                                      load_cols=load_cols)
+        data_df[self.feature_cols] = ringer_norm1(data_df[self.feature_cols].values)
+        mlflow_dataset = mlflow.data.from_pandas(
+            data_df,
+            source=file_dataset.get_df_path(self.df_name),
+            targets='label'
+        )
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.seed)
+        y = data_df[self.label_cols].values.flatten()
+        for i, (train_idx, val_idx) in enumerate(cv.split(y, y)):
+            if i < self.fold:
+                continue
+            break  # Only process the specified fold
+        train_y = data_df.loc[train_idx, self.label_cols].values.flatten()
+        class_weights = compute_class_weight(
+            class_weight='balanced',
+            classes=np.array([0., 1.]),
+            y=train_y
+        ).tolist()
+        mlflow.log_param("class_weights", class_weights)
+        model = MLP(dims=self.dims,
+                    class_weights=class_weights,
+                    activation=self.activation)
+        with torch.no_grad():
+            model.eval()
+            model_input = data_df.iloc[:5][self.feature_cols].values
+            output = model(torch.from_numpy(model_input.astype(np.float32)))
+            signature = infer_signature(
+                model_input=model_input,
+                model_output=output.numpy()  # Convert to numpy for signature
+            )
+        train_dataset = tensor_dataset_from_df(
+            data_df,
+            feature_cols=self.feature_cols,
+            label_cols=self.label_cols,
+            idx=train_idx
+        )
+        val_dataset = tensor_dataset_from_df(
+            data_df,
+            feature_cols=self.feature_cols,
+            label_cols=self.label_cols,
+            idx=val_idx
+        )
+
+        del data_df  # Free memory
+        datamodule = L.LightningDataModule.from_datasets(
+            train_dataset=train_dataset,
+            val_dataset=val_dataset,
+            batch_size=self.batch_size,
+        )
+
+        logger = MLFlowLogger(
+            experiment_name=experiment_name,
+            run_name=self.job_name,
+            tracking_uri=tracking_uri,
+            run_id=self.run_id
+        )
+        checkpoint = ModelCheckpoint(
+            monitor="val_max_sp",  # Monitor a validation metric
+            dirpath=self.checkpoints_dir,  # Directory to save checkpoints
+            filename='best-model-{epoch:02d}-{val_max_sp:.2f}',
+            save_top_k=3,
+            mode="max",  # Save based on minimum validation loss
+        )
+        callbacks = [
+            EarlyStopping(
+                monitor="val_max_sp",
+                patience=self.patience,
+                mode="min"
+            ),
+            checkpoint
+        ]
+
+        mlflow.log_input(
+            mlflow_dataset,
+            context='training'
+        )
+
+        trainer = L.Trainer(
+            max_epochs=3,
+            accelerator=self.accelerator,
+            devices=1,
+            logger=logger,
+            callbacks=callbacks,
+        )
+        trainer.fit(model, datamodule=datamodule)
+
+        mlflow.pytorch.log_model(
+            pytorch_model=MLP.load_from_checkpoint(
+                checkpoint.best_model_path),  # Load the best model
+            artifact_path="model",  # Specify the artifact path,
+            signature=signature,  # Log the model signature,
+        )
+
+    def run(self, experiment_name: str, tracking_uri: str | None = None):
+        if self.run_id is None:
+            raise ValueError()
+        with mlflow.start_run(self.run_id):
+            self._run(experiment_name, tracking_uri)
+
+
 app = Typer(
     name='mlp',
     help='Utility for training MLP models on electron classification data.'
@@ -154,21 +347,20 @@ app = Typer(
 def create_training(
     dataset_path: Path,
     dims: List[int],
-    activation: str = 'relu',
-    df_name: str = 'data',
-    batch_size: int = 32,
-    seed: int | None = None,
-    feature_cols: List[str] = [f'ring_{i}' for i in range(N_RINGS)],
-    label_cols: List[str] = ['label'],
-    init: int = 0,
-    fold: int = 0,
+    activation: str = TrainingJob.model_fields['activation'].default,
+    df_name: str = TrainingJob.model_fields['df_name'].default,
+    batch_size: int = TrainingJob.model_fields['batch_size'].default,
+    seed: int | None = TrainingJob.model_fields['seed'].default,
+    feature_cols: List[str] = TrainingJob.model_fields['feature_cols'].default,
+    label_cols: List[str] = TrainingJob.model_fields['label_cols'].default,
+    init: int = TrainingJob.model_fields['init'].default,
+    fold: int = TrainingJob.model_fields['fold'].default,
     tracking_uri: str | None = None,
     experiment_name: str = 'boosted-lorenzetti',
-    run_id: str | None = None,
-    run_name: str = 'MLP Training',
-    accelerator: str = 'cpu',
-    patience: int = 3,
-    checkpoints_dir: Path = Path('checkpoints/')
+    job_name: str = TrainingJob.model_fields['job_name'].default,
+    accelerator: str = TrainingJob.model_fields['accelerator'].default,
+    patience: int = TrainingJob.model_fields['patience'].default,
+    checkpoints_dir: Path = TrainingJob.model_fields['checkpoints_dir'].default
 ) -> str:
 
     if tracking_uri is None or not tracking_uri:
@@ -176,16 +368,7 @@ def create_training(
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
 
-    if seed is None:
-        seed = np.random.randint(np.finfo(np.float64).max)
-
-    tags = {
-        'init': init,
-        'fold': fold,
-        'model': 'MLP',
-    }
-
-    params = dict(
+    job = TrainingJob(
         dataset_path=dataset_path,
         dims=dims,
         activation=activation,
@@ -196,24 +379,15 @@ def create_training(
         label_cols=label_cols,
         init=init,
         fold=fold,
-        tracking_uri=tracking_uri,
-        experiment_name=experiment_name,
-        run_id=run_id,
-        run_name=run_name,
+        job_name=job_name,
         accelerator=accelerator,
         patience=patience,
-        checkpoints_dir=str(checkpoints_dir)
+        checkpoints_dir=checkpoints_dir
     )
 
-    start_run_params = {
-        'run_name': run_name,
-        'tags': tags,
-    }
+    run_id = job.model_dump_mlflow()
 
-    with mlflow.start_run(**start_run_params) as run:
-        mlflow.log_params(params)
-
-    return run.info.run_id
+    return run_id
 
 
 @app.command(
@@ -221,188 +395,15 @@ def create_training(
 )
 def run_training(
     run_id: str | None = None,
-    dataset_path: Path | None = None,
-    dims: List[int] | None = None,
-    activation: str = 'relu',
-    df_name: str = 'data',
-    batch_size: int = 32,
-    seed: int | None = None,
-    feature_cols: List[str] = [f'ring_{i}' for i in range(N_RINGS)],
-    label_cols: List[str] = ['label'],
-    init: int = 0,
-    fold: int = 0,
     tracking_uri: str | None = None,
     experiment_name: str = 'boosted-lorenzetti',
-    run_name: str = 'MLP Training',
-    accelerator: str = 'cpu',
-    patience: int = 3,
-    checkpoints_dir: Path = Path('checkpoints/')
 ):
     if tracking_uri is None or not tracking_uri:
         tracking_uri = mlflow.get_tracking_uri()
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
 
-    if seed is None:
-        seed = np.random.randint(np.iinfo(np.int64).max)
+    job = TrainingJob.from_mlflow(run_id)
 
-    if run_id:
-        client = mlflow.MlflowClient(
-            tracking_uri=tracking_uri,
-        )
-        experiment = client.get_experiment_by_name(experiment_name)
-        runs = client.search_runs(
-            experiment_ids=[experiment.experiment_id],
-            filter_string=f'run_id = "{run_id}"',
-        )
-        if not runs:
-            raise ValueError(
-                f'Run with ID {run_id} not found in experiment {experiment_name}.')
-        params = runs[0].data.params
-        start_run_params = dict(run_id=run_id)
-
-        dataset_path = Path(params['dataset_path'])
-        dims = [int(dim) for dim in parse_list(params['dims'])]
-        activation = params['activation']
-        df_name = params['df_name']
-        batch_size = int(params['batch_size'])
-        seed = int(params['seed'])
-        feature_cols = parse_list(params['feature_cols'])
-        label_cols = parse_list(params['label_cols'])
-        init = int(params['init'])
-        fold = int(params['fold'])
-        run_name = runs[0].info.run_name
-        accelerator = params['accelerator']
-
-    else:
-        if dataset_path is None:
-            raise ValueError('dataset_path must be provided if run_id is not.')
-
-        if dims is None:
-            raise ValueError('dims must be provided if run_id is not.')
-
-        tags = {
-            'init': init,
-            'fold': fold,
-            'model': 'MLP',
-        }
-        start_run_params = {
-            'run_name': run_name,
-            'tags': tags,
-            'run_id': run_id
-        }
-
-        params = dict(
-            dataset_path=dataset_path,
-            dims=dims,
-            activation=activation,
-            df_name=df_name,
-            batch_size=batch_size,
-            seed=seed,
-            feature_cols=feature_cols,
-            label_cols=label_cols,
-            init=init,
-            fold=fold,
-            run_id=run_id,
-            run_name=run_name,
-            accelerator=accelerator,
-            checkpoints_dir=str(checkpoints_dir)
-        )
-
-    file_dataset = FileDataset(dataset_path)
-    load_cols = feature_cols + label_cols + ['fold', 'id']
-    data_df = file_dataset.get_df(df_name,
-                                  load_cols=load_cols)
-    mlflow_dataset = mlflow.data.from_pandas(
-        data_df,
-        source=file_dataset.get_df_path(df_name),
-        targets='label'
-    )
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-    y = data_df[label_cols].values.flatten()
-    for i, (train_idx, val_idx) in enumerate(cv.split(y, y)):
-        if i < fold:
-            continue
-        break  # Only process the specified fold
-    train_y = data_df.loc[train_idx, label_cols].values.flatten()
-    class_weights = compute_class_weight(
-        class_weight='balanced',
-        classes=np.array([0., 1.]),
-        y=train_y
-    ).tolist()
-    params['class_weights'] = class_weights
-    model = MLP(dims=dims,
-                class_weights=class_weights,
-                activation=activation)
-    with torch.no_grad():
-        model.eval()
-        model_input = data_df.iloc[:5][feature_cols].values
-        output = model(torch.from_numpy(model_input.astype(np.float32)))
-        signature = infer_signature(
-            model_input=model_input,
-            model_output=output.numpy()  # Convert to numpy for signature
-        )
-    train_dataset = tensor_dataset_from_df(
-        data_df,
-        feature_cols=feature_cols,
-        label_cols=label_cols,
-        idx=train_idx
-    )
-    val_dataset = tensor_dataset_from_df(
-        data_df,
-        feature_cols=feature_cols,
-        label_cols=label_cols,
-        idx=val_idx
-    )
-
-    del data_df  # Free memory
-    datamodule = L.LightningDataModule.from_datasets(
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
-        batch_size=batch_size,
-    )
-
-    logger = MLFlowLogger(
-        experiment_name=experiment_name,
-        run_name=run_name,
-        tracking_uri=tracking_uri,
-        run_id=run_id
-    )
-    checkpoint = ModelCheckpoint(
-        monitor="val_loss",  # Monitor a validation metric
-        dirpath=checkpoints_dir,  # Directory to save checkpoints
-        filename="best-model",
-        save_top_k=1,
-        mode="min",  # Save based on minimum validation loss
-    )
-    callbacks = [
-        EarlyStopping(
-            monitor="val_max_sp",
-            patience=patience,
-            mode="min"
-        ),
-        checkpoint
-    ]
-
-    with mlflow.start_run(**start_run_params):
-        mlflow.log_input(
-            mlflow_dataset,
-            context='training'
-        )
-        mlflow.log_params(params)
-
-        trainer = L.Trainer(
-            max_epochs=3,
-            accelerator=accelerator,
-            devices=1,
-            logger=logger,
-            callbacks=callbacks,
-        )
-        trainer.fit(model, datamodule=datamodule)
-
-        mlflow.pytorch.log_model(
-            pytorch_model=MLP.load_from_checkpoint(
-                checkpoint.best_model_path),  # Load the best model
-            artifact_path="model",  # Specify the artifact path,
-            signature=signature,  # Log the model signature
-        )
+    job.run(experiment_name=experiment_name,
+            tracking_uri=tracking_uri)

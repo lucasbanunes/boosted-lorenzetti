@@ -7,6 +7,25 @@ TORCHMETRICS_FPR_INDEX = 0
 TORCHMETRICS_TPR_INDEX = 1
 
 
+def ringer_norm1(data: np.ndarray) -> np.ndarray:
+    """
+    Apply L1 normalization to the input data.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Input data to be normalized.
+
+    Returns
+    -------
+    np.ndarray
+        L1 normalized data.
+    """
+    norms = np.abs(data.sum(axis=1))
+    norms[norms == 0] = 1
+    return data/norms[:, None]
+
+
 def sp_index(tpr: Number,
              fpr: Number,
              backend: Literal['numpy', 'torch']
