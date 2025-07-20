@@ -3,14 +3,71 @@ import pyarrow as pa
 from typing import Dict, Iterable
 from pathlib import Path
 import ROOT
+from mlflow.types import Schema, ColSpec
 
 
 RINGS_COL = 'cl_rings'
 
+MLFLOW_SCHEMA = Schema([
+    ColSpec(type='integer', name='EventNumber'),
+    ColSpec(type='integer', name='RunNumber'),
+    ColSpec(type='integer', name='avgmu'),
+    ColSpec(type='float', name='cl_eta'),
+    ColSpec(type='float', name='cl_phi'),
+    ColSpec(type='float', name='cl_e'),
+    ColSpec(type='float', name='cl_et'),
+    ColSpec(type='float', name='cl_deta'),
+    ColSpec(type='float', name='cl_dphi'),
+    ColSpec(type='float', name='cl_e0'),
+    ColSpec(type='float', name='cl_e1'),
+    ColSpec(type='float', name='cl_e2'),
+    ColSpec(type='float', name='cl_e3'),
+    ColSpec(type='float', name='cl_ehad1'),
+    ColSpec(type='float', name='cl_ehad2'),
+    ColSpec(type='float', name='cl_ehad3'),
+    ColSpec(type='float', name='cl_etot'),
+    ColSpec(type='float', name='cl_e233'),
+    ColSpec(type='float', name='cl_e237'),
+    ColSpec(type='float', name='cl_e277'),
+    ColSpec(type='float', name='cl_emaxs1'),
+    ColSpec(type='float', name='cl_emaxs2'),
+    ColSpec(type='float', name='cl_e2tsts1'),
+    ColSpec(type='float', name='cl_reta'),
+    ColSpec(type='float', name='cl_rphi'),
+    ColSpec(type='float', name='cl_rhad'),
+    ColSpec(type='float', name='cl_rhad1'),
+    ColSpec(type='float', name='cl_eratio'),
+    ColSpec(type='float', name='cl_f0'),
+    ColSpec(type='float', name='cl_f1'),
+    ColSpec(type='float', name='cl_f2'),
+    ColSpec(type='float', name='cl_f3'),
+    ColSpec(type='float', name='cl_weta2'),
+    ColSpec(type='string', name='cl_rings'),  # List serialized as string
+    ColSpec(type='float', name='cl_secondR'),
+    ColSpec(type='float', name='cl_lambdaCenter'),
+    ColSpec(type='float', name='cl_fracMax'),
+    ColSpec(type='float', name='cl_lateralMom'),
+    ColSpec(type='float', name='cl_longitudinalMom'),
+    ColSpec(type='float', name='el_eta'),
+    ColSpec(type='float', name='el_et'),
+    ColSpec(type='float', name='el_phi'),
+    ColSpec(type='boolean', name='el_tight'),
+    ColSpec(type='boolean', name='el_medium'),
+    ColSpec(type='boolean', name='el_loose'),
+    ColSpec(type='boolean', name='el_vloose'),
+    ColSpec(type='float', name='seed_eta'),
+    ColSpec(type='float', name='seed_phi'),
+    ColSpec(type='string', name='mc_pdgid'),  # List serialized as string
+    ColSpec(type='string', name='mc_eta'),    # List serialized as string
+    ColSpec(type='string', name='mc_phi'),    # List serialized as string
+    ColSpec(type='string', name='mc_e'),      # List serialized as string
+    ColSpec(type='string', name='mc_et')      # List serialized as string
+])
+
 PYARROW_SCHEMA = pa.schema([
     ('EventNumber', pa.int32()),
     ('RunNumber', pa.int32()),
-    ('avgmu', pa.float32()),
+    ('avgmu', pa.int32()),
     ('cl_eta', pa.float32()),
     ('cl_phi', pa.float32()),
     ('cl_e', pa.float32()),
@@ -50,10 +107,10 @@ PYARROW_SCHEMA = pa.schema([
     ('el_eta', pa.float32()),
     ('el_et', pa.float32()),
     ('el_phi', pa.float32()),
-    ('el_tight', pa.bool8()),
-    ('el_medium', pa.bool8()),
-    ('el_loose', pa.bool8()),
-    ('el_vloose', pa.bool8()),
+    ('el_tight', pa.bool_()),
+    ('el_medium', pa.bool_()),
+    ('el_loose', pa.bool_()),
+    ('el_vloose', pa.bool_()),
     ('seed_eta', pa.float32()),
     ('seed_phi', pa.float32()),
     ('mc_pdgid', pa.list_(pa.float32())),

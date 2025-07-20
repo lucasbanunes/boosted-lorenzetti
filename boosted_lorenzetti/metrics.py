@@ -1,13 +1,47 @@
 from numbers import Number
 import numpy as np
+from typing import Literal
+import torch
+
+TORCHMETRICS_FPR_INDEX = 0
+TORCHMETRICS_TPR_INDEX = 1
 
 
 def sp_index(tpr: Number,
-             fpr: Number):
-    return np.sqrt(
-        np.sqrt(tpr*(1-fpr)) *
-        ((tpr + (1-fpr))/2)
-    )
+             fpr: Number,
+             backend: Literal['numpy', 'torch']
+             ) -> Number:
+    """
+    Calculate the Specificity-Positive index (SP) given true positive rate (TPR)
+    and false positive rate (FPR).
+
+    Parameters
+    ----------
+    tpr : Number
+        True Positive Rate (TPR)
+    fpr : Number
+        False Positive Rate (FPR)
+    backend : Literal['numpy', 'torch']
+        The backend to use for calculations, either 'numpy' or 'torch'.
+
+    Returns
+    -------
+    Number
+        Specificity-Positive index (SP)
+    """
+    match backend:
+        case 'numpy':
+            return np.sqrt(
+                np.sqrt(tpr*(1-fpr)) *
+                ((tpr + (1-fpr))/2)
+            )
+        case 'torch':
+            return torch.sqrt(
+                torch.sqrt(tpr*(1-fpr)) *
+                ((tpr + (1-fpr))/2)
+            )
+        case _:
+            raise ValueError("Unsupported backend. Use 'numpy' or 'torch'.")
 
 
 def weighted_mean(data: np.ndarray,

@@ -1,10 +1,12 @@
 from pathlib import Path
+from typing import Tuple
 from typer import Typer
 import mlflow
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 import numpy as np
 import hashlib
+import pyarrow as pa
 
 from . import LztDataset
 from ..constants import N_RINGS
@@ -20,7 +22,17 @@ DEFAULT_DESCRIPTION = (
 
 def open_rings(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Opens the rings column in the DataFrame.
+    Expands the rings column in the DataFrame into separate columns.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame containing the rings column.
+
+    Returns
+    -------
+    pd.DataFrame
+        The DataFrame with expanded ring columns.
     """
     for i in range(N_RINGS):
         df[f'ring_{i}'] = df[ntuple.RINGS_COL].apply(lambda x: x[i] if len(x) > i else MISSING_RING)
@@ -30,7 +42,19 @@ def open_rings(df: pd.DataFrame) -> pd.DataFrame:
 
 def get_description(df: pd.DataFrame, no_hash: bool = False) -> dict:
     """
-    Returns a description of the DataFrame.
+    Returns a dictionary with the description of the DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame to describe.
+    no_hash : bool, optional
+        If True, the hash of the DataFrame will not be included in the description, by default False
+
+    Returns
+    -------
+    dict
+        A dictionary with the description of the DataFrame.
     """
     descriptions = df.describe().to_dict()
     metrics = {}
@@ -41,7 +65,7 @@ def get_description(df: pd.DataFrame, no_hash: bool = False) -> dict:
     metrics['size'] = len(df)
     metrics['duplicates'] = df.duplicated().sum()
     if not no_hash:
-        row_hashes = pd.util.hash_pandas_object(df)
+        row_hashes = pd.util.hash_pandas_object(df, index=False)
         metrics['hash'] = hashlib.sha256(row_hashes.values).hexdigest()
     return metrics
 
@@ -50,7 +74,21 @@ def process_dataset(dataset_path: Path,
                     label: int,
                     sample_id_start: int = 0) -> pd.DataFrame:
     """
-    Processes the dataset and returns a DataFrame.
+    Processes a Lorenzetti dataset and returns a DataFrame with the necessary features.
+
+    Parameters
+    ----------
+    dataset_path : Path
+        The path to the dataset.
+    label : int
+        The label for the dataset.
+    sample_id_start : int, optional
+        The starting sample ID, by default 0
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame with the processed dataset.
     """
     dataset = LztDataset(dataset_path)
     df = dataset.get_ntuple_pdf()
@@ -63,6 +101,24 @@ def process_dataset(dataset_path: Path,
     df['mc_pdgid'] = df['mc_pdgid'].map(lambda x: tuple(x))
     df['mc_phi'] = df['mc_phi'].map(lambda x: tuple(x))
     df = df.convert_dtypes(dtype_backend='pyarrow')
+    df['label'] = df['label'].astype(pd.ArrowDtype(pa.uint8()))
+    df['id'] = df['id'].astype(pd.ArrowDtype(pa.uint64()))
+
+    for col_name in df.columns:
+
+        if col_name.startswith('mc_'):
+            continue
+
+        if col_name.startswith('ring_'):
+            df[col_name] = df[col_name].astype(pd.ArrowDtype(pa.float32()))
+            continue
+
+        try:
+            arrow_dtype = ntuple.PYARROW_SCHEMA.field(col_name).type
+            df[col_name] = df[col_name].astype(pd.ArrowDtype(arrow_dtype))
+        except KeyError:
+            # If the column is not in the schema, keep it as is
+            continue
 
     description = get_description(df)
     return df, description
@@ -83,10 +139,12 @@ def ingest(electron_dataset: str,
            experiment_name: str = 'boosted-lorenzetti',
            n_folds: int = 5,
            seed: int = 42,
-           description: str = DEFAULT_DESCRIPTION):
+           description: str = DEFAULT_DESCRIPTION
+           ) -> Tuple[str, str, Path]:
 
     if not output_dir.is_dir():
         raise ValueError(f"Output path {output_dir} is not a directory.")
+    output_dir /= 'data'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if tracking_uri is None or not tracking_uri:
@@ -118,14 +176,15 @@ def ingest(electron_dataset: str,
     cv = StratifiedKFold(n_folds, shuffle=True, random_state=seed)
     for fold, (_, val_idx) in enumerate(cv.split(ingest_df, ingest_df['label'])):
         ingest_df.loc[val_idx, 'fold'] = fold
+    ingest_df['fold'] = ingest_df['fold'].astype(pd.ArrowDtype(pa.int8()))
 
-    output_path = output_dir / f'{tags["hash"]}.parquet'
+    output_path = output_dir / f'data_{tags["hash"]}.parquet'
     mlflow_dataset = mlflow.data.from_pandas(
         ingest_df,
-        source=str(output_path),
+        source=str(output_path.parent),
         name=name,
         targets='label',
-        digest=tags['hash']
+        digest=tags['hash'],
     )
     with mlflow.start_run(run_name=f'{name} Dataset',
                           tags=tags,
@@ -147,4 +206,4 @@ def ingest(electron_dataset: str,
         mlflow.log_metrics(metrics_dict)
         ingest_df.to_parquet(output_path, compression='gzip', index=False)
 
-    return run.info.run_id, tags['hash']
+    return run.info.run_id, tags['hash'], output_path
