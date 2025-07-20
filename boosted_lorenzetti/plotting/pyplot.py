@@ -14,6 +14,14 @@ from ..constants import RINGS_LAYERS
 
 
 def get_plt_color_cycle() -> List[str]:
+    """
+    Get the current color cycle from matplotlib.
+
+    Returns
+    -------
+    List[str]
+        A list of color codes.
+    """
     return plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 
