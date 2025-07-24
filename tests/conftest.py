@@ -25,18 +25,25 @@ def session_tmp_path() -> Generator[Path, None, None]:
 
 
 @pytest.fixture(scope='session')
-def test_dataset_path(session_tmp_path: Path) -> Path:
+def n_folds() -> int:
+    return 5
+
+
+@pytest.fixture(scope='session')
+def test_dataset_path(session_tmp_path: Path,
+                      n_folds: int) -> Path:
     test_dataset_path = session_tmp_path / 'test_dataset_path'
     df_dir = test_dataset_path / 'data'
     df_dir.mkdir(parents=True, exist_ok=True)
     df_path = df_dir / 'data_test.parquet'
     # Create a dummy dataset
+    size = n_folds * 100  # 100 samples per fold
     df = {
-        f'ring_{i}': np.random.rand(100) for i in range(N_RINGS)
+        f'ring_{i}': np.random.rand(size) for i in range(N_RINGS)
     }
-    df['label'] = np.random.randint(0, 2, size=100)
-    df['fold'] = np.random.randint(0, 2, size=100)
-    df['id'] = np.arange(1, 101)
+    df['label'] = np.random.randint(0, 2, size=size)
+    df['fold'] = np.random.randint(0, n_folds, size=size)
+    df['id'] = np.arange(1, size + 1)
     df = pd.DataFrame(df)
     df.to_parquet(df_path)
 

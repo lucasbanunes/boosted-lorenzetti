@@ -13,9 +13,25 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q"
+norecursedirs = [
+    "build",
+    "dist",
+    ".eggs",
+    "*.egg-info",
+    "docs/_build",
+    "__pycache__",
+    ".git"
+]
+python_files = [
+    "test_*.py"
+]
 testpaths = [
     "tests"
 ]
 pythonpath = [
     "."
 ]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s - %(levelname)s - %(name)s - %(module)s - %(lineno)s - %(message)s"
+log_date_format = "%Y-%m-%d %H:%M:%S"
