@@ -25,6 +25,8 @@ import logging
 from itertools import product
 import shutil
 import pandas as pd
+from tempfile import TemporaryDirectory
+import plotly.express as px
 
 from ..data import tensor_dataset_from_df
 from ..dataset.file_dataset import FileDataset
@@ -236,6 +238,7 @@ class TrainingJob(BaseModel):
         return self.run_id
 
     def _exec(self,
+              cache_dir: Path,
               experiment_name: str,
               tracking_uri: str | None = None):
         if self.completed:
@@ -346,10 +349,12 @@ class TrainingJob(BaseModel):
         )
         mlflow.pytorch.log_model(
             pytorch_model=best_model,
-            artifact_path="model",
+            name="ml_model",
             signature=signature,
         )
-        # best_model.to_onnx(, export_params=True)
+        onnx_path = cache_dir / 'mlp_model.onnx'
+        best_model.to_onnx(onnx_path, export_params=True)
+        mlflow.log_artifact(str(onnx_path), artifact_path='onnx_model')
         self.completed = True
         mlflow.log_param("completed", self.completed)
         logging.info('Training completed and model logged to MLFlow.')
@@ -357,12 +362,13 @@ class TrainingJob(BaseModel):
 
     def exec(self,
              experiment_name: str,
-             tracking_uri: str | None = None,
+             tracking_uri: str,
              nested: bool = False):
         if self.run_id is None:
             raise ValueError()
-        with mlflow.start_run(self.run_id, nested=nested):
-            self._exec(experiment_name, tracking_uri)
+        with (mlflow.start_run(self.run_id, nested=nested),
+              TemporaryDirectory() as temp_dir):
+            self._exec(Path(temp_dir), experiment_name, tracking_uri)
 
     def as_metric_dict(self) -> Dict[str, Any]:
         """
@@ -613,7 +619,9 @@ class KFoldTrainingJob(BaseModel):
 
         return children_jobs
 
-    def _exec(self, experiment_name: str, tracking_uri: str | None = None):
+    def _exec(self, cache_dir: Path,
+              experiment_name: str,
+              tracking_uri: str | None):
         children = self.get_children(experiment_name, tracking_uri)
 
         if not children:
@@ -632,42 +640,53 @@ class KFoldTrainingJob(BaseModel):
                            nested=True)
             children_jobs.append(child_job)
 
-        job_metrics, metric_names = TrainingJob.get_metrics_df(children_jobs)
+        children_metrics_df, metric_names = TrainingJob.get_metrics_df(children_jobs)
         if self.best_metric_mode == 'min':
-            best_idx = job_metrics[self.best_metric].idxmin()
+            best_idx = children_metrics_df[self.best_metric].idxmin()
         elif self.best_metric_mode == 'max':
-            best_idx = job_metrics[self.best_metric].idxmax()
+            best_idx = children_metrics_df[self.best_metric].idxmax()
         else:
             raise ValueError(
                 f'Unsupported best metric mode: {self.best_metric_mode}')
-        best_metrics = job_metrics.loc[best_idx]
-
-        # agg_dict = {name: 'mean' for name in metric_names}
-        # agg_metrics = job_metrics.groupby('fold').agg(
-        #     {
-
-        # # Select best based on best metric and mode
-        # best_job = min(
-        #     children_jobs,
-        #     key=lambda job: job.run.data.metrics[self.best_metric] if self.best_metric_mode == 'min' else -
-        #     job.run.data.metrics[self.best_metric]
-        # )
-
+        best_metrics = children_metrics_df.loc[best_idx]
         mlflow.log_param("best_job_run_id", best_metrics['run_id'])
         mlflow.log_param("best_job_fold", best_metrics['fold'])
         mlflow.log_param("best_job_init", best_metrics['init'])
 
-        # # Transfer the best model to the main run
-        # best_model_path = mlflow.pytorch.get_model_path(
-        #     run_id=best_job.run_id,
-        #     artifact_path='model'
-        # )
-        # mlflow.pytorch.log_model(
-        #     pytorch_model=best_job.model,
-        #     artifact_path='model',
-        #     run_id=self.run_id,
-        #     signature=best_job.run.data.signature
-        # )
+        children_metrics_df_path = cache_dir / 'job_metrics.csv'
+        children_metrics_df.to_csv(
+            children_metrics_df_path, index=False)
+        mlflow.log_artifact(str(children_metrics_df_path))
+
+        aggregation_dict = dict()
+        for metric in metric_names:
+            aggregation_dict[f'{metric}_mean'] = pd.NamedAgg(column=metric, aggfunc='mean')
+            aggregation_dict[f'{metric}_std'] = pd.NamedAgg(column=metric, aggfunc='std')
+            aggregation_dict[f'{metric}_min'] = pd.NamedAgg(column=metric, aggfunc='min')
+            aggregation_dict[f'{metric}_max'] = pd.NamedAgg(column=metric, aggfunc='max')
+            aggregation_dict[f'{metric}_median'] = pd.NamedAgg(column=metric, aggfunc='median')
+        aggregated_metrics = children_metrics_df \
+            .groupby('fold').agg(**aggregation_dict) \
+            .reset_index() \
+            .melt(id_vars='fold',
+                  var_name='metric')
+        aggregated_metrics_path = cache_dir / 'aggregated_metrics.csv'
+        aggregated_metrics.to_csv(aggregated_metrics_path, index=False)
+        mlflow.log_artifact(str(aggregated_metrics_path))
+
+        best_metric_label = self.best_metric.replace('_', ' ').capitalize()
+        fig = px.box(children_metrics_df, x="fold", y=self.best_metric)
+        fig.update_layout(
+            title=f'K-Fold {best_metric_label} Distribution',
+            xaxis_title='Fold',
+            yaxis_title=best_metric_label
+        )
+        fig.add_hline(y=best_metrics[self.best_metric],
+                      line_dash="dash",
+                      line_color="red",
+                      annotation_text='Best',
+                      annotation_position="top left")
+        mlflow.log_figure(fig, f'{self.best_metric}_box_plot.html')
 
         self.completed = True
         mlflow.log_param("completed", True)
@@ -679,8 +698,9 @@ class KFoldTrainingJob(BaseModel):
              nested: bool = False):
         if self.run_id is None:
             raise ValueError("Run ID must be set before running the job.")
-        with mlflow.start_run(self.run_id, nested=nested):
-            self._exec(experiment_name, tracking_uri)
+        with (mlflow.start_run(self.run_id, nested=nested),
+              TemporaryDirectory() as temp_dir):
+            self._exec(Path(temp_dir), experiment_name, tracking_uri)
 
 
 @app.command(
