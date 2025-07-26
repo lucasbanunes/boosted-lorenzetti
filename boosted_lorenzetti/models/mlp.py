@@ -3,7 +3,7 @@ import mlflow.entities
 import torch
 import torch.nn as nn
 import lightning as L
-from typing import Any, Tuple, List, Literal, Dict
+from typing import Any, Set, Tuple, List, Literal, Dict
 import typer
 import mlflow
 from pathlib import Path
@@ -24,6 +24,7 @@ import json
 import logging
 from itertools import product
 import shutil
+import pandas as pd
 
 from ..data import tensor_dataset_from_df
 from ..dataset.file_dataset import FileDataset
@@ -47,6 +48,7 @@ class MLP(L.LightningModule):
             'roc': BinaryROC()
         })
         self.val_metrics = self.train_metrics.clone()
+        self.example_input_array = torch.randn(5, dims[0])
         layers = []
 
         match activation:
@@ -183,11 +185,16 @@ class TrainingJob(BaseModel):
 
     @computed_field
     @cached_property
-    def run(self) -> mlflow.entities.run.Run:
+    def run(self) -> Any:  # Unable to use mlflow.entities.run.Run because it is not compatible with pydantic
         if self.run_id is None:
             raise ValueError("Run ID must be set before accessing the run.")
         client = mlflow.MlflowClient()
         return client.get_run(self.run_id)
+
+    @computed_field
+    @property
+    def metrics(self) -> Dict[str, float]:
+        return self.run.data.metrics  # type: ignore
 
     @classmethod
     def from_mlflow(cls, run_id: str) -> 'TrainingJob':
@@ -195,25 +202,13 @@ class TrainingJob(BaseModel):
         client = mlflow.MlflowClient()
         run = client.get_run(run_id)
         params = run.data.params
-        return cls(
-            dataset_path=Path(params['dataset_path']),
-            dims=json.loads(params['dims']),
-            activation=params['activation'],
-            df_name=params['df_name'],
-            batch_size=int(params['batch_size']),
-            seed=int(params['seed']),
-            feature_cols=json.loads(params['feature_cols']),
-            label_cols=json.loads(params['label_cols']),
-            init=int(params['init']),
-            fold=int(params['fold']),
-            run_id=run_id,
-            job_name=params['job_name'],
-            accelerator=params['accelerator'],
-            patience=int(params['patience']),
-            checkpoints_dir=Path(params['checkpoints_dir']),
-            completed=bool(params.get('completed', False)),
-            max_epochs=int(params['max_epochs'])
-        )
+        params['dataset_path'] = Path(params['dataset_path'])
+        params['dims'] = json.loads(params['dims'])
+        params['feature_cols'] = json.loads(params['feature_cols'])
+        params['label_cols'] = json.loads(params['label_cols'])
+        params['checkpoints_dir'] = Path(params['checkpoints_dir'])
+        params['run_id'] = run_id
+        return cls(**params)
 
     def model_dump_mlflow(self, nested: bool = False) -> str:
         tags = {
@@ -222,8 +217,13 @@ class TrainingJob(BaseModel):
             'model': 'MLP',
         }
 
-        params = self.model_dump()
-        params.pop('completed')
+        params = self.model_dump(
+            exclude=[
+                'completed',
+                'run',
+                'metrics'
+            ]
+        )
         params['dims'] = json.dumps(self.dims)
         params['feature_cols'] = json.dumps(self.feature_cols)
         params['label_cols'] = json.dumps(self.label_cols)
@@ -349,6 +349,7 @@ class TrainingJob(BaseModel):
             artifact_path="model",
             signature=signature,
         )
+        # best_model.to_onnx(, export_params=True)
         self.completed = True
         mlflow.log_param("completed", self.completed)
         logging.info('Training completed and model logged to MLFlow.')
@@ -362,6 +363,34 @@ class TrainingJob(BaseModel):
             raise ValueError()
         with mlflow.start_run(self.run_id, nested=nested):
             self._exec(experiment_name, tracking_uri)
+
+    def as_metric_dict(self) -> Dict[str, Any]:
+        """
+        Converts the metrics of the training job to a dictionary format.
+        """
+        return {
+            'run_id': self.run_id,
+            'init': self.init,
+            'fold': self.fold,
+            'completed': self.completed,
+            **self.metrics
+        }
+
+    @staticmethod
+    def get_metrics_df(
+        jobs: List['TrainingJob']
+    ) -> Tuple[pd.DataFrame, Set[str]]:
+        """
+        Collects metrics from a list of TrainingJob instances and returns a DataFrame.
+        """
+        metric_names = set()
+        data = list()
+        for job in jobs:
+            for metric_name in job.metrics.keys():
+                metric_names.add(metric_name)
+            job_data = job.as_metric_dict()
+            data.append(job_data)
+        return pd.DataFrame.from_records(data), metric_names
 
 
 app = typer.Typer(
@@ -489,7 +518,7 @@ class KFoldTrainingJob(BaseModel):
 
     @computed_field
     @cached_property
-    def run(self) -> mlflow.entities.run.Run:
+    def run(self) -> Any:  # Unable to use mlflow.entities.run.Run because it is not compatible with pydantic
         if self.run_id is None:
             raise ValueError("Run ID must be set before accessing the run.")
         client = mlflow.MlflowClient()
@@ -502,34 +531,25 @@ class KFoldTrainingJob(BaseModel):
         client = mlflow.MlflowClient()
         run = client.get_run(run_id)
         params = run.data.params
-        return cls(
-            dataset_path=Path(params['dataset_path']),
-            dims=json.loads(params['dims']),
-            activation=params['activation'],
-            df_name=params['df_name'],
-            batch_size=int(params['batch_size']),
-            seed=int(params['seed']),
-            feature_cols=json.loads(params['feature_cols']),
-            label_cols=json.loads(params['label_cols']),
-            inits=int(params['inits']),
-            fold_col=params['fold_col'],
-            folds=int(params['folds']),
-            run_id=run_id,
-            job_name=params['job_name'],
-            accelerator=params['accelerator'],
-            patience=int(params['patience']),
-            checkpoints_dir=Path(params['checkpoints_dir']),
-            completed=bool(params.get('completed', False)),
-            max_epochs=int(params['max_epochs'])
-        )
+        params['dataset_path'] = Path(params['dataset_path'])
+        params['dims'] = json.loads(params['dims'])
+        params['feature_cols'] = json.loads(params['feature_cols'])
+        params['label_cols'] = json.loads(params['label_cols'])
+        params['checkpoints_dir'] = Path(params['checkpoints_dir'])
+        params['run_id'] = run_id
+        return cls(**params)
 
     def model_dump_mlflow(self, nested: bool = False) -> str:
         tags = {
             'model': 'MLP',
         }
 
-        params = self.model_dump()
-        params.pop('completed')
+        params = self.model_dump(
+            exclude=[
+                'completed',
+                'run'
+            ]
+        )
         params['dims'] = json.dumps(self.dims)
         params['feature_cols'] = json.dumps(self.feature_cols)
         params['label_cols'] = json.dumps(self.label_cols)
@@ -563,7 +583,8 @@ class KFoldTrainingJob(BaseModel):
         logging.info(f'Model dumped to MLFlow with run ID: {self.run_id}')
         return self.run_id
 
-    def get_children(self, experiment_name: str, tracking_uri: str | None = None) -> List[mlflow.entities.run.Run]:
+    # Unable to use mlflow.entities.run.Run because it is not compatible with pydantic
+    def get_children(self, experiment_name: str, tracking_uri: str | None = None) -> List[Any]:
         client = mlflow.MlflowClient(
             tracking_uri=tracking_uri
         )
@@ -576,14 +597,30 @@ class KFoldTrainingJob(BaseModel):
         )
         return children
 
+    def get_children_jobs(self, experiment_name: str, tracking_uri: str | None = None) -> List[TrainingJob]:
+        """
+        Retrieves child training jobs from MLFlow based on the parent run ID.
+        """
+        children = self.get_children(experiment_name, tracking_uri)
+
+        children_jobs = []
+        for child in children:
+            child_run_id = child.info.run_id
+            child_job = TrainingJob.from_mlflow(child_run_id)
+            logging.info(
+                f'Found child training job with: run ID - {child_run_id} - fold - {child_job.fold} - init - {child_job.init}')
+            children_jobs.append(child_job)
+
+        return children_jobs
+
     def _exec(self, experiment_name: str, tracking_uri: str | None = None):
         children = self.get_children(experiment_name, tracking_uri)
 
         if not children:
             logging.critical('No child training jobs found.')
             return
-        
-        child_jobs = []
+
+        children_jobs = []
 
         for child in children:
             child_run_id = child.info.run_id
@@ -593,17 +630,32 @@ class KFoldTrainingJob(BaseModel):
             child_job.exec(experiment_name=experiment_name,
                            tracking_uri=tracking_uri,
                            nested=True)
-            child_jobs.append(child_job)
+            children_jobs.append(child_job)
 
-        # Select best based on best metric and mode
-        best_job = min(
-            child_jobs,
-            key=lambda job: job.run.data.metrics[self.best_metric] if self.best_metric_mode == 'min' else -job.run.data.metrics[self.best_metric]
-        )
+        job_metrics, metric_names = TrainingJob.get_metrics_df(children_jobs)
+        if self.best_metric_mode == 'min':
+            best_idx = job_metrics[self.best_metric].idxmin()
+        elif self.best_metric_mode == 'max':
+            best_idx = job_metrics[self.best_metric].idxmax()
+        else:
+            raise ValueError(
+                f'Unsupported best metric mode: {self.best_metric_mode}')
+        best_metrics = job_metrics.loc[best_idx]
 
-        mlflow.log_param("best_job_run_id", best_job.run_id)
-        mlflow.log_param("best_job_fold", best_job.fold)
-        mlflow.log_param("best_job_init", best_job.init)
+        # agg_dict = {name: 'mean' for name in metric_names}
+        # agg_metrics = job_metrics.groupby('fold').agg(
+        #     {
+
+        # # Select best based on best metric and mode
+        # best_job = min(
+        #     children_jobs,
+        #     key=lambda job: job.run.data.metrics[self.best_metric] if self.best_metric_mode == 'min' else -
+        #     job.run.data.metrics[self.best_metric]
+        # )
+
+        mlflow.log_param("best_job_run_id", best_metrics['run_id'])
+        mlflow.log_param("best_job_fold", best_metrics['fold'])
+        mlflow.log_param("best_job_init", best_metrics['init'])
 
         # # Transfer the best model to the main run
         # best_model_path = mlflow.pytorch.get_model_path(
@@ -637,6 +689,8 @@ class KFoldTrainingJob(BaseModel):
 def create_kfold(
     dataset_path: Path,
     dims: types.DimsType,
+    best_metric: types.BestMetricType,
+    best_metric_mode: types.BestMetricModeType,
     seed: types.SeedType = None,
     checkpoints_dir: types.CheckpointsDirType = KFoldTrainingJob.model_fields[
         'checkpoints_dir'].default,
@@ -683,6 +737,8 @@ def create_kfold(
         patience=patience,
         checkpoints_dir=checkpoints_dir,
         max_epochs=max_epochs,
+        best_metric=best_metric,
+        best_metric_mode=best_metric_mode
     )
 
     run_id = job.model_dump_mlflow()

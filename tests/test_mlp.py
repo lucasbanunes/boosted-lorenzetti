@@ -27,7 +27,9 @@ def test_kfold_training(test_dataset_path: Path):
         dims=[N_RINGS, 1],
         folds=5,
         experiment_name=experiment_name,
-        max_epochs=10
+        max_epochs=2,
+        best_metric='val_max_sp',
+        best_metric_mode='max'
     )
 
     mlp.run_kfold(
