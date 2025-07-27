@@ -72,3 +72,23 @@ class FileDataset:
             engine='pyarrow',
             columns=load_cols,
         )
+
+    def create_df(self, name: str, df: pd.DataFrame) -> None:
+        """
+        Saves a DataFrame to the dataset directory.
+
+        Parameters
+        ----------
+        name : str
+            The name of the dataframe.
+        df : pd.DataFrame
+            The DataFrame to save.
+        """
+        df_path = self.get_df_path(name)
+        df_path.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(
+            df_path / f'{name}.parquet',
+            engine='pyarrow',
+            index=False,
+            compression='gzip'
+        )

@@ -49,7 +49,7 @@ CheckpointsDirType = Annotated[
 ]
 
 BATCH_SIZE_DESCRIPTION = (
-    "Batch size for training the model. Default is 32."
+    "Batch size for training the model."
 )
 
 BatchSizeType = Annotated[
@@ -76,7 +76,7 @@ DimsType = Annotated[
 ]
 
 ACTIVATION_DESCRIPTION = (
-    "Activation function to use in the model. Default is 'relu'."
+    "Activation function to use in the model."
 )
 
 ActivationType = Annotated[
@@ -91,7 +91,7 @@ ActivationType = Annotated[
 ]
 
 DF_NAME_DESCRIPTION = (
-    "Name of the DataFrame to use for training. Default is 'data'."
+    "Name of the DataFrame to use for training."
 )
 
 DfNameType = Annotated[
@@ -106,7 +106,7 @@ DfNameType = Annotated[
 ]
 
 FOLD_COLUMN_DESCRIPTION = (
-    "Column name in the DataFrame that indicates the fold number for cross-validation. Default is 'fold'."
+    "Column name in the DataFrame that indicates the fold number for cross-validation."
 )
 
 FoldColType = Annotated[
@@ -122,7 +122,7 @@ FoldColType = Annotated[
 ]
 
 FEATURE_COLS_DESCRIPTION = (
-    "List of feature column names in the DataFrame. Default is a list of ring features."
+    "List of feature column names in the DataFrame."
 )
 
 FeatureColsType = Annotated[
@@ -137,7 +137,7 @@ FeatureColsType = Annotated[
 ]
 
 LABEL_COLS_DESCRIPTION = (
-    "List of label column names in the DataFrame. Default is ['label']."
+    "List of label column names in the DataFrame.."
 )
 
 LabelColsType = Annotated[
@@ -152,7 +152,7 @@ LabelColsType = Annotated[
 ]
 
 INIT_DESCRIPTION = (
-    "Initialization identifier for the model parameters. Default is 0."
+    "Initialization identifier for the model parameters."
 )
 
 InitType = Annotated[
@@ -167,7 +167,7 @@ InitType = Annotated[
 ]
 
 FOLD_DESCRTIPTION = (
-    "Fold number for cross-validation. Default is 0."
+    "Fold number for cross-validation."
 )
 
 FoldType = Annotated[
@@ -182,7 +182,7 @@ FoldType = Annotated[
 ]
 
 ACCELERATOR_DESCRIPTION = (
-    "Type of accelerator to use for training. Default is 'cpu'."
+    "Type of accelerator to use for training."
 )
 
 AcceleratorType = Annotated[
@@ -197,7 +197,7 @@ AcceleratorType = Annotated[
 ]
 
 PATEINCE_DESCRIPTION = (
-    "Number of epochs with no improvement after which training will be stopped. Default is 10"
+    "Number of epochs with no improvement after which training will be stopped."
 )
 
 PatienceType = Annotated[
@@ -212,7 +212,7 @@ PatienceType = Annotated[
 ]
 
 INITS_DESCRIPTION = (
-    "Number of different initializations to perform for the model. Default is 5."
+    "Number of different initializations to perform for the model."
 )
 
 InitsType = Annotated[

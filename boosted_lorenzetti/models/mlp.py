@@ -3,7 +3,7 @@ import mlflow.entities
 import torch
 import torch.nn as nn
 import lightning as L
-from typing import Any, Set, Tuple, List, Literal, Dict
+from typing import Annotated, Any, Set, Tuple, List, Literal, Dict
 import typer
 import mlflow
 from pathlib import Path
@@ -114,7 +114,7 @@ class MLP(L.LightningModule):
         self.log("train_loss", loss, on_epoch=True, prog_bar=True)
         prob = torch.sigmoid(logits)
         batch_values = self.train_metrics(prob, y)
-        acc, max_sp, roc_auc, max_sp_tpr, max_sp_fpr, _ = self.get_metrics(
+        acc, max_sp, roc_auc, max_sp_fpr, max_sp_tpr, _ = self.get_metrics(
             batch_values)
         self.log('train_acc', acc, on_epoch=True, prog_bar=True)
         self.log("train_max_sp", max_sp, on_epoch=True, prog_bar=True)
@@ -139,7 +139,7 @@ class MLP(L.LightningModule):
 
     def on_validation_epoch_end(self):
         metric_values = self.val_metrics.compute()
-        acc, max_sp, roc_auc, max_sp_tpr, max_sp_fpr, max_sp_thresh = self.get_metrics(
+        acc, max_sp, roc_auc, max_sp_fpr, max_sp_tpr, max_sp_thresh = self.get_metrics(
             metric_values)
         self.log('val_acc', acc, on_epoch=True, prog_bar=True)
         self.log("val_max_sp", max_sp, on_epoch=True, prog_bar=True)
@@ -161,7 +161,6 @@ class TrainingJob(BaseModel):
     activation: types.ActivationType = 'relu'
     df_name: types.DfNameType = 'data'
     batch_size: types.BatchSizeType = 32
-    seed: types.SeedType
     feature_cols: types.FeatureColsType = [f'ring_{i}' for i in range(N_RINGS)]
     label_cols: types.LabelColsType = ['label']
     init: types.InitType = 0
@@ -212,7 +211,7 @@ class TrainingJob(BaseModel):
         params['run_id'] = run_id
         return cls(**params)
 
-    def model_dump_mlflow(self, nested: bool = False) -> str:
+    def to_mlflow(self, nested: bool = False) -> str:
         tags = {
             'init': self.init,
             'fold': self.fold,
@@ -258,12 +257,6 @@ class TrainingJob(BaseModel):
         )
         cv = ColumnKFold(fold_col=self.fold_col)
         train_idx, val_idx = cv.get_fold_idx(data_df, self.fold)
-        # cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.seed)
-        # y = data_df[self.label_cols].values.flatten()
-        # for i, (train_idx, val_idx) in enumerate(cv.split(y, y)):
-        #     if i < self.fold:
-        #         continue
-        #     break  # Only process the specified fold
         train_y = data_df.loc[train_idx, self.label_cols].values.flatten()
         class_weights = compute_class_weight(
             class_weight='balanced',
@@ -325,7 +318,7 @@ class TrainingJob(BaseModel):
                 patience=self.patience,
                 mode="min"
             ),
-            checkpoint
+            checkpoint,
         ]
 
         mlflow.log_input(
@@ -339,10 +332,11 @@ class TrainingJob(BaseModel):
             devices=1,
             logger=logger,
             callbacks=callbacks,
-            enable_progress_bar=False
+            enable_progress_bar=False,
         )
-        logging.info('Starting training process.')
+        logging.info('Starting training process...')
         trainer.fit(model, datamodule=datamodule)
+        logging.info('Training completed.')
 
         best_model = MLP.load_from_checkpoint(
             checkpoint.best_model_path
@@ -411,7 +405,6 @@ app = typer.Typer(
 def create_training(
     dataset_path: Path,
     dims: types.DimsType,
-    seed: types.SeedType = None,
     checkpoints_dir: types.CheckpointsDirType = TrainingJob.model_fields[
         'checkpoints_dir'].default,
     activation: types.ActivationType = TrainingJob.model_fields['activation'].default,
@@ -432,8 +425,6 @@ def create_training(
 
     set_logger()
     logging.debug('Setting MLFlow tracking URI and experiment name.')
-    if seed is None:
-        seed = types.seed_factory()
 
     if tracking_uri is None or not tracking_uri:
         tracking_uri = mlflow.get_tracking_uri()
@@ -446,7 +437,6 @@ def create_training(
         activation=activation,
         df_name=df_name,
         batch_size=batch_size,
-        seed=seed,
         feature_cols=feature_cols,
         label_cols=label_cols,
         init=init,
@@ -459,7 +449,7 @@ def create_training(
         max_epochs=max_epochs,
     )
 
-    run_id = job.model_dump_mlflow()
+    run_id = job.to_mlflow()
     logging.info(f'Created training job with run ID: {run_id}')
 
     return run_id
@@ -495,7 +485,6 @@ class KFoldTrainingJob(BaseModel):
     activation: types.ActivationType = TrainingJob.model_fields['activation'].default
     df_name: types.DfNameType = TrainingJob.model_fields['df_name'].default
     batch_size: types.BatchSizeType = TrainingJob.model_fields['batch_size'].default
-    seed: types.SeedType = TrainingJob.model_fields['seed'].default
     feature_cols: types.FeatureColsType = TrainingJob.model_fields['feature_cols'].default
     label_cols: types.LabelColsType = TrainingJob.model_fields['label_cols'].default
     inits: types.InitsType = 5
@@ -545,7 +534,7 @@ class KFoldTrainingJob(BaseModel):
         params['run_id'] = run_id
         return cls(**params)
 
-    def model_dump_mlflow(self, nested: bool = False) -> str:
+    def to_mlflow(self, nested: bool = False) -> str:
         tags = {
             'model': 'MLP',
         }
@@ -553,7 +542,8 @@ class KFoldTrainingJob(BaseModel):
         params = self.model_dump(
             exclude=[
                 'completed',
-                'run'
+                'run',
+                'run_id'
             ]
         )
         params['dims'] = json.dumps(self.dims)
@@ -568,7 +558,6 @@ class KFoldTrainingJob(BaseModel):
                     activation=self.activation,
                     df_name=self.df_name,
                     batch_size=self.batch_size,
-                    seed=self.seed,
                     feature_cols=self.feature_cols,
                     label_cols=self.label_cols,
                     init=init,
@@ -580,7 +569,7 @@ class KFoldTrainingJob(BaseModel):
                     f'init_{init}_fold_{fold}',
                     max_epochs=self.max_epochs
                 )
-                training_job.model_dump_mlflow(nested=True)
+                training_job.to_mlflow(nested=True)
                 logging.debug(
                     f'Dumped training job for init {init}, fold {fold}.')
             mlflow.log_params(params)
@@ -640,7 +629,8 @@ class KFoldTrainingJob(BaseModel):
                            nested=True)
             children_jobs.append(child_job)
 
-        children_metrics_df, metric_names = TrainingJob.get_metrics_df(children_jobs)
+        children_metrics_df, metric_names = TrainingJob.get_metrics_df(
+            children_jobs)
         if self.best_metric_mode == 'min':
             best_idx = children_metrics_df[self.best_metric].idxmin()
         elif self.best_metric_mode == 'max':
@@ -660,11 +650,16 @@ class KFoldTrainingJob(BaseModel):
 
         aggregation_dict = dict()
         for metric in metric_names:
-            aggregation_dict[f'{metric}_mean'] = pd.NamedAgg(column=metric, aggfunc='mean')
-            aggregation_dict[f'{metric}_std'] = pd.NamedAgg(column=metric, aggfunc='std')
-            aggregation_dict[f'{metric}_min'] = pd.NamedAgg(column=metric, aggfunc='min')
-            aggregation_dict[f'{metric}_max'] = pd.NamedAgg(column=metric, aggfunc='max')
-            aggregation_dict[f'{metric}_median'] = pd.NamedAgg(column=metric, aggfunc='median')
+            aggregation_dict[f'{metric}_mean'] = pd.NamedAgg(
+                column=metric, aggfunc='mean')
+            aggregation_dict[f'{metric}_std'] = pd.NamedAgg(
+                column=metric, aggfunc='std')
+            aggregation_dict[f'{metric}_min'] = pd.NamedAgg(
+                column=metric, aggfunc='min')
+            aggregation_dict[f'{metric}_max'] = pd.NamedAgg(
+                column=metric, aggfunc='max')
+            aggregation_dict[f'{metric}_median'] = pd.NamedAgg(
+                column=metric, aggfunc='median')
         aggregated_metrics = children_metrics_df \
             .groupby('fold').agg(**aggregation_dict) \
             .reset_index() \
@@ -703,15 +698,22 @@ class KFoldTrainingJob(BaseModel):
             self._exec(Path(temp_dir), experiment_name, tracking_uri)
 
 
+DatasetPathType = Annotated[
+    Path,
+    typer.Argument(
+        help='Path to the dataset file.'
+    )
+]
+
+
 @app.command(
     help='Create a K-Fold training run for an MLP model.'
 )
 def create_kfold(
-    dataset_path: Path,
+    dataset_path: DatasetPathType,
     dims: types.DimsType,
     best_metric: types.BestMetricType,
     best_metric_mode: types.BestMetricModeType,
-    seed: types.SeedType = None,
     checkpoints_dir: types.CheckpointsDirType = KFoldTrainingJob.model_fields[
         'checkpoints_dir'].default,
     activation: types.ActivationType = KFoldTrainingJob.model_fields['activation'].default,
@@ -732,8 +734,6 @@ def create_kfold(
 
     set_logger()
     logging.debug('Setting MLFlow tracking URI and experiment name.')
-    if seed is None:
-        seed = types.seed_factory()
 
     if tracking_uri is None or not tracking_uri:
         tracking_uri = mlflow.get_tracking_uri()
@@ -746,7 +746,6 @@ def create_kfold(
         activation=activation,
         df_name=df_name,
         batch_size=batch_size,
-        seed=seed,
         feature_cols=feature_cols,
         label_cols=label_cols,
         inits=inits,
@@ -761,7 +760,7 @@ def create_kfold(
         best_metric_mode=best_metric_mode
     )
 
-    run_id = job.model_dump_mlflow()
+    run_id = job.to_mlflow()
     logging.info(f'Created K-Fold training job with run ID: {run_id}')
 
     return run_id
@@ -771,7 +770,7 @@ def create_kfold(
     help='Train an MLP model using K-Fold cross-validation.'
 )
 def run_kfold(
-    run_id: str | None = None,
+    run_id: str,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 ):

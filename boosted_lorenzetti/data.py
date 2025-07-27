@@ -2,6 +2,7 @@ import pandas as pd
 from torch.utils.data import TensorDataset, Dataset
 from typing import List
 import torch
+import hashlib
 
 
 def tensor_dataset_from_df(
@@ -46,3 +47,21 @@ def tensor_dataset_from_df(
         torch.from_numpy(labels),
     )
     return dataset
+
+
+def get_dataframe_hash(df: pd.DataFrame) -> str:
+    """
+    Computes a hash for the DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame to hash.
+
+    Returns
+    -------
+    str
+        A SHA-256 hash of the DataFrame.
+    """
+    row_hashes = pd.util.hash_pandas_object(df, index=False)
+    return hashlib.sha256(row_hashes.values).hexdigest()
