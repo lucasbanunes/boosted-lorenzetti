@@ -9,7 +9,7 @@ import numpy.typing as npt
 import seaborn as sns
 from numbers import Number
 
-from ..norms import norm1
+from ..metrics import ringer_norm1
 from ..constants import RINGS_LAYERS
 
 
@@ -77,7 +77,7 @@ def plot_rings_profile(data: Union[pd.DataFrame, npt.NDArray[np.floating]],
     ax : plt.Axes, optional
         Ax to plot the data, by default None
     normalize : bool, optional
-        If True, normalizes the rings with norm1, by default True
+        If True, normalizes the rings with ringer_norm1, by default True
     error_margin : bool, optional
         If True, plots the error margin as shaded area,
         by default True
@@ -99,7 +99,7 @@ def plot_rings_profile(data: Union[pd.DataFrame, npt.NDArray[np.floating]],
     if isinstance(data, pd.DataFrame):
         data = data.values
     if normalize:
-        data = norm1(data)
+        data = ringer_norm1(data)
     mean = data.mean(axis=0)
     std = data.std(axis=0)
     if ax is None:
@@ -152,7 +152,7 @@ def plot_all_rings(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
     ax : plt.Axes, optional
         Ax to plot the data, by default None
     normalize : bool, optional
-        If True, normalizes the rings with norm1, by default True
+        If True, normalizes the rings with ringer_norm1, by default True
         by default True
     plot_kwargs : Dict[str, Any], optional
         Kwargs for plt.Axes.plot, by default {}
@@ -167,7 +167,7 @@ def plot_all_rings(df: Union[pd.DataFrame, npt.NDArray[np.floating]],
     if isinstance(df, pd.DataFrame):
         rings = df.values
     if normalize:
-        rings = norm1(rings)
+        rings = ringer_norm1(rings)
     if ax is None:
         ax = plt.gca()
 

@@ -1,8 +1,8 @@
 # LEGACY
 
-# import ROOT
-# import logging
-# from pathlib import Path
+import ROOT
+import logging
+from pathlib import Path
 # import logging.config
 # from . import constants
 # from . import dataset
@@ -15,15 +15,15 @@
 # from . import calo_cluster
 # from . import detector
 
-# CPP_DIR = Path(__file__).parent / 'include' / 'Lorenzetti'
-# CPP_FILE_EXTENSIONS = [
-#     '*.h'
-# ]
-# for file_ext in CPP_FILE_EXTENSIONS:
-#     for filename in CPP_DIR.glob(file_ext):
-#         logging.debug(f'Declaring header file {filename}')
-#         text = filename.read_text()
-#         ROOT.gInterpreter.Declare(text)
+CPP_DIR = Path(__file__).parent / 'include' / 'Lorenzetti'
+CPP_FILE_EXTENSIONS = [
+    '*.h'
+]
+for file_ext in CPP_FILE_EXTENSIONS:
+    for filename in CPP_DIR.glob(file_ext):
+        logging.debug(f'Declaring header file {filename}')
+        text = filename.read_text()
+        ROOT.gInterpreter.Declare(text)
 
 
 # # LZT_UTILS_INCLUDE_PATHS = [

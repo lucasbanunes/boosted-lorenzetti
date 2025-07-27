@@ -120,3 +120,151 @@ STRUCTS = [
     'EventSeedContainer_Seeds',
     'TruthParticleContainer_Particles'
 ]
+
+
+def EventInfoContainer_as_python(data):
+    new_data = []
+    for d in data:
+        new_data.append({
+            'avgmu': d.avgmu,
+            'eventNumber': d.eventNumber,
+            'runNumber': d.runNumber})
+    return new_data
+
+
+def CaloCellContainer_Cells_as_python(data):
+    new_data = []
+    for d in data:
+        new_data.append({
+            'descriptor_link': d.descriptor_link,
+            'deta': d.deta,
+            'dphi': d.dphi,
+            'e': d.e,
+            'et': d.et,
+            'eta': d.eta,
+            'phi': d.phi,
+            'tau': d.tau})
+    return new_data
+
+
+def CaloClusterContainer_Clusters_as_python(data):
+    new_data = []
+    for d in data:
+        new_data.append({
+            'cell_links': np.array(d.cell_links, dtype=np.uint64).tolist(),
+            'deta': d.deta,
+            'dphi': d.dphi,
+            'e': d.e,
+            'e0': d.e0,
+            'e1': d.e1,
+            'e2': d.e2,
+            'e233': d.e233,
+            'e237': d.e237,
+            'e277': d.e277,
+            'e2tsts1': d.e2tsts1,
+            'e3': d.e3,
+            'ehad1': d.ehad1,
+            'ehad2': d.ehad2,
+            'ehad3': d.ehad3,
+            'emaxs1': d.emaxs1,
+            'emaxs2': d.emaxs2,
+            'eratio': d.eratio,
+            'et': d.et,
+            'eta': d.eta,
+            'etot': d.etot,
+            'f0': d.f0,
+            'f1': d.f1,
+            'f2': d.f2,
+            'f3': d.f3,
+            'fracMax': d.fracMax,
+            'lambdaCenter': d.lambdaCenter,
+            'lateralMom': d.lateralMom,
+            'longitudinalMom': d.longitudinalMom,
+            'phi': d.phi,
+            'reta': d.reta,
+            'rhad': d.rhad,
+            'rhad1': d.rhad1,
+            'rphi': d.rphi,
+            'secondLambda': d.secondLambda,
+            'secondR': d.secondR,
+            # seed_link is an int32, but it is a list in the schema
+            'seed_link': d.seed_link,
+            'weta2': d.weta2})
+    return new_data
+
+
+def CaloDetDescriptorContainer_Cells_as_python(data):
+    new_data = []
+    for d in data:
+        new_data.append({
+            'bc_duration': d.bc_duration,
+            'bcid_end': d.bcid_end,
+            'bcid_start': d.bcid_start,
+            'deta': d.deta,
+            'detector': d.detector,
+            'dphi': d.dphi,
+            'e': d.e,
+            'edep': d.edep,
+            'edep_per_bunch': np.array(d.edep_per_bunch).tolist(),
+            'eta': d.eta,
+            'hash': d.hash,
+            'phi': d.phi,
+            'pulse': np.array(d.pulse).tolist(),
+            'sampling': d.sampling,
+            'tau': d.tau,
+            'tof': np.array(d.tof).tolist(),
+            'z': d.z})
+    return new_data
+
+
+def CaloRingsContainer_Rings_as_python(data):
+    new_data = []
+    for d in data:
+        new_data.append({
+            'cluster_link': d.cluster_link,
+            'rings': np.array(d.rings).tolist()})
+    return new_data
+
+
+def ElectronContainer_Electrons_as_python(data):
+    new_data = []
+    for d in data:
+        new_data.append({
+            'cluster_link': d.cluster_link,
+            'e': d.e,
+            'et': d.et,
+            'eta': d.eta,
+            'phi': d.phi,
+            'isEM': np.array(d.isEM).tolist()})
+    return new_data
+
+
+def SeedContainer_Seeds_as_python(data):
+    new_data = []
+    for d in data:
+        new_data.append({
+            'e': d.e,
+            'et': d.et,
+            'eta': d.eta,
+            'id': d.id,
+            'phi': d.phi})
+    return new_data
+
+
+def TruthParticleContainer_Particles_as_python(data):
+    new_data = []
+    for d in data:
+        new_data.append({
+            'e': d.e,
+            'et': d.et,
+            'eta': d.eta,
+            'pdgid': d.pdgid,
+            'phi': d.phi,
+            'px': d.px,
+            'py': d.py,
+            'pz': d.pz,
+            'seedid': d.seedid,
+            'vx': d.vx,
+            'vy': d.vy,
+            'vz': d.vz})
+    return new_data
