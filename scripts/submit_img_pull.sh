@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=img-pull
 #SBATCH -o /home/lucas.nunes/logs/%x-%j.out
+#SBATCH --partition=cpu
 
 # Launches dev environment
 # Usage

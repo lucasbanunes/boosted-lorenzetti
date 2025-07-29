@@ -102,14 +102,6 @@ DescriptionType = Annotated[
     )
 ]
 
-IncludeMetricsType = Annotated[
-    bool,
-    typer.Option(
-        '--include-metrics',
-        help='If true, include metrics like mean, std, etc. in the dataset description.'
-    )
-]
-
 QueryType = Annotated[
     str | None,
     typer.Option(
@@ -250,7 +242,7 @@ def ingest(electron_dataset: ElectronDatasetType,
            n_folds: NFoldsType = 5,
            seed: SeedType = 42,
            description: DescriptionType = DEFAULT_DESCRIPTION,
-           include_metrics: IncludeMetricsType = False,
+           include_metrics: bool = False,
            query: QueryType = None
            ) -> Tuple[str, str, Path]:
 

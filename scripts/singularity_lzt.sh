@@ -1,17 +1,17 @@
 #!/bin/bash
 #SBATCH --job-name=lzt
-#SBATCH --partition=cpu-large
-#SBATCH --cpus-per-task=40
+#SBATCH --partition=gpu
+#SBATCH --cpus-per-task=8
 #SBATCH -o /home/lucas.nunes/logs/lorenzetti/%x-%j.out
 # %x is the job name
 # %j is the job ID
 
 # Launches dev environment
 # Usage
-# $ sbatch submit_lorenzetti.sh <command>
+# $ sbatch singularity_lzt.sh <command>
 
-echo "Running command: ${@} on lorenzetti_latest.sif"
+echo "Running command: ${@} on boosted-lorenzetti_0.1.0.sif"
 singularity exec \
 --nv \
 --bind /mnt/cern_data:/mnt/cern_data \
-$SIF_IMGS_DIR/lorenzetti_v2.1.0.sif "${@}"
+$SIF_IMGS_DIR/boosted-lorenzetti_0.1.0.sif "${@}"
