@@ -82,18 +82,25 @@ class MLFlowLoggedJob(BaseModel, ABC):
         raise NotImplementedError("Subclasses must implement this method.")
 
     def exec(self,
-             experiment_name: str,
-             tracking_uri: str | None,
+             experiment_name: str | None = None,
+             tracking_uri: str | None = None,
              nested: bool = False):
 
         if self.run_id is None:
-            raise ValueError("Run ID must be set before executing the job. Call `to_mlflow` first.")
+            raise ValueError(
+                "Run ID must be set before executing the job. Call `to_mlflow` first.")
 
-        with (mlflow.start_run(run_id=self.run_id, nested=nested),
+        if tracking_uri is not None:
+            mlflow.set_tracking_uri(tracking_uri)
+
+        if experiment_name is not None:
+            mlflow.set_experiment(experiment_name)
+
+        with (mlflow.start_run(run_id=self.run_id, nested=nested,
+                               run_name=self.job_name),
               TemporaryDirectory() as tmp_dir):
             with log_start_end('exec_start', 'exec_end'):
-                mlflow.log_param("job_name", self.job_name)
-                mlflow.log_param("job_type", self.__class__.__name__)
+                mlflow.log_param("job", self.__class__.__name__)
                 self.custom_exec(Path(tmp_dir),
                                  experiment_name=experiment_name,
                                  tracking_uri=tracking_uri)

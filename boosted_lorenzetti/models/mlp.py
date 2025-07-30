@@ -459,12 +459,11 @@ def create_training(
     help='Train an MLP model on ingested data.'
 )
 def run_training(
-    run_id: str | None = None,
+    run_ids: List[str] | str,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 ):
     set_logger()
-    logging.info(f'Running training job with run ID: {run_id}')
     logging.debug(
         f'Tracking URI: {tracking_uri}, Experiment Name: {experiment_name}')
 
@@ -473,10 +472,14 @@ def run_training(
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
 
-    job = TrainingJob.from_mlflow(run_id)
+    if isinstance(run_ids, str):
+        run_ids = [run_ids]
 
-    job.exec(experiment_name=experiment_name,
-             tracking_uri=tracking_uri)
+    for run_id in run_ids:
+        logging.info(f'Running training job with run ID: {run_id}')
+        job = TrainingJob.from_mlflow(run_id)
+        job.exec(experiment_name=experiment_name,
+                 tracking_uri=tracking_uri)
 
 
 class KFoldTrainingJob(BaseModel):

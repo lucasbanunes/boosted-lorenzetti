@@ -1,3 +1,4 @@
+import logging
 from boosted_lorenzetti.models import mlp
 from pathlib import Path
 
@@ -14,7 +15,32 @@ def test_full_training(test_dataset_path: Path):
     )
 
     mlp.run_training(
-        run_id=run_id,
+        run_ids=run_id,
+        experiment_name=experiment_name,
+    )
+
+
+def test_multiple_trainings(test_dataset_path: Path):
+    experiment_name = 'test_experiment'
+
+    run_ids = []
+    run_ids.append(
+        mlp.create_training(
+            dataset_path=test_dataset_path,
+            dims=[N_RINGS, 1],
+            experiment_name=experiment_name
+        )
+    )
+    run_ids.append(
+        mlp.create_training(
+            dataset_path=test_dataset_path,
+            dims=[N_RINGS, 1],
+            experiment_name=experiment_name
+        )
+    )
+
+    mlp.run_training(
+        run_ids=run_ids,
         experiment_name=experiment_name,
     )
 
