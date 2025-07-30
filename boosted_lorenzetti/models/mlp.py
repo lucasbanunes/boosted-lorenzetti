@@ -459,7 +459,7 @@ def create_training(
     help='Train an MLP model on ingested data.'
 )
 def run_training(
-    run_ids: List[str] | str,
+    run_ids: List[str],
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 ):
