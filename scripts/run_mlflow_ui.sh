@@ -8,12 +8,13 @@
 
 # Launches dev environment
 # Usage
-# $ sbatch run_mlflow_ui.sh <img> <port>
-# $ sbatch run_mlflow_ui.sh boosted-lorenzetti_0.1.0.sif 5000
+# $ sbatch run_mlflow_ui.sh <img> <mlruns-path> <port>
+# $ sbatch run_mlflow_ui.sh boosted-lorenzetti_0.1.0.sif /home/test.user 5000
 
 img=$1
-port=$2
-command="cd /mnt/cern_data/${USER}/lorenzetti && conda run -n dev mlflow ui -h 0.0.0.0 -p ${port}"
+mlruns_path=$2
+port=$3
+command="cd ${mlruns_path} && conda run -n dev mlflow ui -h 0.0.0.0 -p ${port}"
 # "cd /mnt/cern_data/${USER}/lorenzetti && conda run -n dev mlflow ui -h 0.0.0.0 -p ${port}"
 
 echo "Running command ${command} on ${img}"
