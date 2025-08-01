@@ -159,3 +159,61 @@ def list_by_pattern(files: Iterable[Path | str], pattern: str) -> Generator[Path
         else:
             if file.match(pattern):
                 yield file
+
+
+def unflatted_dict_process_value(value: Any) -> Any:
+    """
+    Process a value for unflattened dictionary.
+
+    Parameters
+    ----------
+    value : Any
+        The value to process.
+
+    Returns
+    -------
+    Any
+        The processed value.
+    """
+    if isinstance(value, dict):
+        return unflatten_dict(value)
+    elif isinstance(value, (list, tuple)):
+        return [unflatted_dict_process_value(item) for item in value]
+    elif isinstance(value, set):
+        return {unflatted_dict_process_value(item) for item in value}
+    else:
+        return value
+
+
+def unflatten_dict(flat_dict: dict[str, Any], separator: str = '.') -> dict[str, Any]:
+    """
+    Unflatten a dictionary with keys that are concatenated by a separator.
+
+    Parameters
+    ----------
+    flat_dict : dict[str, Any]
+        The flat dictionary to unflatten.
+    separator : str, optional
+        The separator used in the keys of the flat dictionary. Default is '.'.
+
+    Returns
+    -------
+    dict[str, Any]
+        The unflattened dictionary.
+    """
+    unflattened = {}
+    for key, value in flat_dict.items():
+
+        if '.' not in key:
+            unflattened[key] = unflatted_dict_process_value(value)
+            continue
+
+        # Split the key by the separator and build the nested structure
+        parts = key.split(separator)
+        d = unflattened
+        for part in parts[:-1]:
+            # This works because d is passed by reference
+            d = d.setdefault(part, {})
+        d[parts[-1]] = unflatted_dict_process_value(value)
+
+    return unflattened

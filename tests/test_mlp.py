@@ -1,4 +1,3 @@
-import logging
 from boosted_lorenzetti.models import mlp
 from pathlib import Path
 
