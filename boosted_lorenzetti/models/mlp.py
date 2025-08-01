@@ -357,12 +357,38 @@ class TrainingJob(BaseModel):
     def exec(self,
              experiment_name: str,
              tracking_uri: str,
-             nested: bool = False):
+             nested: bool = False,
+             force: Literal['all', 'error'] | None = None):
         if self.run_id is None:
             raise ValueError()
-        with (mlflow.start_run(self.run_id, nested=nested),
+
+        if self.completed and force != 'all':
+            logging.info('Training job already completed. Skipping execution.')
+            return
+
+        start_run_params = dict(
+            nested=nested
+        )
+
+        old_id = None
+        if force and self.run_id:
+            old_id = self.run_id
+            self.run_id = None
+            # Creates the new run with a new ID
+            self.to_mlflow(nested=nested)
+        if force and not self.run_id:
+            pass
+        else:
+            start_run_params['run_id'] = self.run_id
+
+        with (mlflow.start_run(**start_run_params) as run,
               TemporaryDirectory() as temp_dir):
             self._exec(Path(temp_dir), experiment_name, tracking_uri)
+            self.run_id = run.info.run_id
+
+        if old_id:
+            client = mlflow.MlflowClient()
+            client.delete_run(old_id)
 
     def as_metric_dict(self) -> Dict[str, Any]:
         """
@@ -613,8 +639,13 @@ class KFoldTrainingJob(BaseModel):
 
     def _exec(self, cache_dir: Path,
               experiment_name: str,
-              tracking_uri: str | None):
+              tracking_uri: str | None,
+              force: Literal['all', 'error'] | None = None):
         children = self.get_children(experiment_name, tracking_uri)
+
+        if self.completed and force != 'all':
+            logging.info('Job already completed. Skipping execution.')
+            return
 
         if not children:
             logging.critical('No child training jobs found.')
@@ -629,7 +660,8 @@ class KFoldTrainingJob(BaseModel):
                 f'Running child training job with: run ID - {child_run_id} - fold - {child_job.fold} - init - {child_job.init}')
             child_job.exec(experiment_name=experiment_name,
                            tracking_uri=tracking_uri,
-                           nested=True)
+                           nested=True,
+                           force=force)
             children_jobs.append(child_job)
 
         children_metrics_df, metric_names = TrainingJob.get_metrics_df(
