@@ -241,7 +241,7 @@ class TrainingJob(BaseModel):
               experiment_name: str,
               tracking_uri: str | None = None):
         if self.completed:
-            logging.info('Training job already completed.')
+            logging.info(f'Training job {self.run_id} already completed.')
             return
         file_dataset = FileDataset(self.dataset_path)
         load_cols = self.feature_cols + self.label_cols + [self.fold_col, 'id']
@@ -725,12 +725,18 @@ class KFoldTrainingJob(BaseModel):
     def exec(self,
              experiment_name: str,
              tracking_uri: str | None = None,
-             nested: bool = False):
+             nested: bool = False,
+             force: Literal['all', 'error'] | None = None):
+
+        if self.completed:
+            logging.info('K-Fold training job already completed. Skipping execution.')
+            return
+
         if self.run_id is None:
             raise ValueError("Run ID must be set before running the job.")
         with (mlflow.start_run(self.run_id, nested=nested),
               TemporaryDirectory() as temp_dir):
-            self._exec(Path(temp_dir), experiment_name, tracking_uri)
+            self._exec(Path(temp_dir), experiment_name, tracking_uri, force)
 
 
 DatasetPathType = Annotated[
@@ -808,6 +814,7 @@ def run_kfold(
     run_id: str,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
+    force: str | None = None
 ):
     set_logger()
     logging.info(f'Running K-Fold training job with run ID: {run_id}')
@@ -822,4 +829,5 @@ def run_kfold(
     job = KFoldTrainingJob.from_mlflow(run_id)
 
     job.exec(experiment_name=experiment_name,
-             tracking_uri=tracking_uri)
+             tracking_uri=tracking_uri,
+             force=force)
