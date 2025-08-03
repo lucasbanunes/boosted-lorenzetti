@@ -50,6 +50,10 @@ class MLFlowLoggedJob(BaseModel, ABC):
         Any,
         PrivateAttr()
     ] = None
+    _run_dict: Annotated[
+        Any,
+        PrivateAttr()
+    ] = None
 
     @computed_field
     @property
@@ -68,6 +72,59 @@ class MLFlowLoggedJob(BaseModel, ABC):
         if self.run is None:
             return {}
         return self.run.data.metrics  # type: ignore
+
+    @computed_field
+    @property
+    def tags(self) -> Dict[str, str]:
+        if self.run is None:
+            return {}
+        return self.run.data.tags
+
+    @computed_field
+    @property
+    def run_params(self) -> Dict[str, Any]:
+        """
+        Returns the parameters of the MLFlow run.
+        """
+        if self.run is None:
+            return {}
+        return self.run.data.params
+
+    @computed_field
+    @property
+    def run_dict(self) -> Dict[str, Any]:
+        """
+        Returns a dictionary representation of the MLFlow run.
+        """
+        if self.run is None:
+            self._run_dict = {}
+        if self._run_dict is not None:
+            return self._run_dict
+        data = {
+            'run_id': self.run.info.run_id,
+            'name': self.run.info.run_name,
+            'status': self.run.info.status,
+        }
+        params_dict = {
+            f'param.{key}': value
+            for key, value in self.run_params.items()
+        }
+        data.update(params_dict)
+
+        metrics_dict = {
+            f'metric.{key}': value
+            for key, value in self.metrics.items()
+        }
+        data.update(metrics_dict)
+
+        tags_dict = {
+            f'tag.{key}': value
+            for key, value in self.tags.items()
+        }
+        data.update(tags_dict)
+
+        self._run_dict = data
+        return self._run_dict
 
     @classmethod
     def load_json_params(cls, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -88,6 +145,9 @@ class MLFlowLoggedJob(BaseModel, ABC):
         new_params = {}
         for key, value in params.items():
             if isinstance(value, str):
+                if value == 'None':
+                    new_params[key] = None
+                    continue
                 try:
                     new_params[key] = json.loads(value)
                 except json.JSONDecodeError:
@@ -126,6 +186,7 @@ class MLFlowLoggedJob(BaseModel, ABC):
         This method is useful to ensure that the latest data is fetched from MLFlow.
         """
         self._mlflow_run = None
+        self._run_dict = None
         self.run
 
     def convert_params(self, value: Any) -> Any:
@@ -146,7 +207,12 @@ class MLFlowLoggedJob(BaseModel, ABC):
             return str(value)
         elif isinstance(value, datetime):
             return value.isoformat()
-        elif value is None or isinstance(value, (int, float, str, bool)):
+        elif isinstance(value, str):
+            if value == 'None':
+                return None
+            else:
+                return value
+        elif value is None or isinstance(value, (int, float, bool)):
             return value
         elif isinstance(value, np.floating):
             return float(value)
@@ -283,12 +349,11 @@ class MLFlowLoggedJob(BaseModel, ABC):
         with (mlflow.start_run(run_id=self.run_id, nested=nested,
                                run_name=self.name),
               TemporaryDirectory() as tmp_dir):
-            with log_start_end('exec_start', 'exec_end'):
-                self.exec(Path(tmp_dir),
-                          experiment_name=experiment_name,
-                          tracking_uri=tracking_uri)
-                self.executed = True
-                self.log_param('executed', True)
+            self.exec(Path(tmp_dir),
+                      experiment_name=experiment_name,
+                      tracking_uri=tracking_uri)
+            self.executed = True
+            self.log_param('executed', True)
 
         if old_id is not None:
             client = mlflow.MlflowClient()
@@ -314,3 +379,26 @@ class MLFlowLoggedJob(BaseModel, ABC):
         """
         for key, value in params.items():
             self.log_param(key, value)
+
+    def artifact_exists(self, artifact_path: str) -> bool:
+        """
+        Check if an artifact exists in the MLFlow run.
+
+        Parameters
+        ----------
+        artifact_path : str
+            The path to the artifact.
+
+        Returns
+        -------
+        bool
+            True if the artifact exists, False otherwise.
+        """
+        if self.run is None:
+            return False
+        client = mlflow.MlflowClient()
+        artifacts = client.list_artifacts(self.run_id)
+        for artifact in artifacts:
+            if artifact.path == artifact_path:
+                return True
+        return False

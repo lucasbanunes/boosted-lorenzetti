@@ -17,21 +17,30 @@ from torchmetrics.classification import (
     BinaryROC
 )
 from mlflow.models import infer_signature
-import numpy as np
-from sklearn.utils.class_weight import compute_class_weight
 import logging
 import shutil
 import pandas as pd
 import plotly.express as px
+from datetime import datetime, timezone
 
-from ..data import tensor_dataset_from_df
-from ..dataset.file_dataset import FileDataset
-from ..metrics import sp_index, ringer_norm1
+from ..dataset.duckdb import DuckDBDataset
+from ..metrics import sp_index
 from ..log import set_logger
-from ..cross_validation import ColumnKFold
 from .. import types
 from ..constants import N_RINGS
 from ..jobs import MLFlowLoggedJob
+
+
+class MLPDataset(DuckDBDataset):
+
+    def get_df_from_query(self, query: str, limit: str | None = None):
+        X, y = super().get_df_from_query(query, limit)
+        norms = X.sum_horizontal().abs()
+        norms[norms == 0] = 1
+        X[X.columns] = X/norms
+        if not self.label_cols:
+            y = X
+        return X, y
 
 
 class MLP(L.LightningModule):
@@ -153,33 +162,21 @@ class MLP(L.LightningModule):
 
 
 class TrainingJob(MLFlowLoggedJob):
-    dataset_path: Path
+    db_path: Path
+    train_query: str
     dims: types.DimsType
+    val_query: str | None = None
+    test_query: str | None = None
+    predict_query: str | None = None
+    label_col: str | None = 'label'
     activation: types.ActivationType = 'relu'
-    df_name: types.DfNameType = 'data'
     batch_size: types.BatchSizeType = 32
-    feature_cols: types.FeatureColsType = [f'ring_{i}' for i in range(N_RINGS)]
-    label_cols: types.LabelColsType = ['label']
-    init: types.InitType = 0
-    fold: types.FoldType = 0
-    fold_col: types.FoldColType = 'fold'
     run_id: types.MLFlowRunId = None
     name: types.JobNameType = 'MLP Training Job'
     accelerator: types.AcceleratorType = 'cpu'
     patience: types.PatienceType = 10
     checkpoints_dir: types.CheckpointsDirType = Path('checkpoints/')
-    completed: bool = False
     max_epochs: types.MaxEpochsType = 3
-
-    def model_post_init(self, context):
-        super().model_post_init(context)
-
-        if self.dims[0] != len(self.feature_cols):
-            raise ValueError(
-                f'Input dimension {self.dims[0]} does not match feature columns {len(self.feature_cols)}')
-
-        if self.dims[-1] != 1:
-            raise ValueError(f'Output dimension {self.dims[-1]} must be 1')
 
     def to_mlflow(self,
                   nested: bool = False,
@@ -191,61 +188,39 @@ class TrainingJob(MLFlowLoggedJob):
                                  extra_tags=extra_tags)
 
     def exec(self,
-             cache_dir: Path,
+             tmp_dir: Path,
              experiment_name: str,
              tracking_uri: str | None = None):
-        file_dataset = FileDataset(self.dataset_path)
-        load_cols = self.feature_cols + self.label_cols + [self.fold_col, 'id']
-        data_df = file_dataset.get_df(self.df_name,
-                                      load_cols=load_cols)
-        logging.info('Loaded dataset from file.')
-        data_df[self.feature_cols] = ringer_norm1(
-            data_df[self.feature_cols].values)
-        mlflow_dataset = mlflow.data.from_pandas(
-            data_df,
-            source=file_dataset.get_df_path(self.df_name),
-            targets='label'
+
+        exec_start = datetime.now(timezone.utc).timestamp()
+        mlflow.log_metric('exec_start', exec_start)
+        datamodule = MLPDataset(
+            db_path=self.db_path,
+            train_query=self.train_query,
+            val_query=self.val_query,
+            test_query=self.test_query,
+            predict_query=self.predict_query,
+            label_cols=self.label_col,
+            batch_size=self.batch_size)
+        datamodule.log_to_mlflow()
+        class_weights = datamodule.get_class_weights(
+            how='balanced'
         )
-        cv = ColumnKFold(fold_col=self.fold_col)
-        train_idx, val_idx = cv.get_fold_idx(data_df, self.fold)
-        train_y = data_df.loc[train_idx, self.label_cols].values.flatten()
-        class_weights = compute_class_weight(
-            class_weight='balanced',
-            classes=np.array([0., 1.]),
-            y=train_y
-        ).tolist()
         mlflow.log_param("class_weights", class_weights)
         model = MLP(dims=self.dims,
                     class_weights=class_weights,
                     activation=self.activation)
+        sample_X, _ = datamodule.get_df_from_query(self.train_query, limit=10)
         with torch.no_grad():
             model.eval()
-            model_input = data_df.iloc[:5][self.feature_cols].values
-            output = model(torch.from_numpy(model_input.astype(np.float32)))
+            output = model(sample_X.to_torch())
             signature = infer_signature(
-                model_input=model_input,
+                model_input=sample_X.to_pandas(
+                    use_pyarrow_extension_array=True),
                 model_output=output.numpy()  # Convert to numpy for signature
             )
+        model.train()
         logging.info('Model initialized and example input processed.')
-        train_dataset = tensor_dataset_from_df(
-            data_df,
-            feature_cols=self.feature_cols,
-            label_cols=self.label_cols,
-            idx=train_idx
-        )
-        val_dataset = tensor_dataset_from_df(
-            data_df,
-            feature_cols=self.feature_cols,
-            label_cols=self.label_cols,
-            idx=val_idx
-        )
-
-        del data_df  # Free memory
-        datamodule = L.LightningDataModule.from_datasets(
-            train_dataset=train_dataset,
-            val_dataset=val_dataset,
-            batch_size=self.batch_size,
-        )
         logging.info('Data module created from datasets.')
 
         logger = MLFlowLogger(
@@ -272,11 +247,6 @@ class TrainingJob(MLFlowLoggedJob):
             checkpoint,
         ]
 
-        mlflow.log_input(
-            mlflow_dataset,
-            context='training'
-        )
-
         trainer = L.Trainer(
             max_epochs=self.max_epochs,
             accelerator=self.accelerator,
@@ -286,7 +256,12 @@ class TrainingJob(MLFlowLoggedJob):
             enable_progress_bar=False,
         )
         logging.info('Starting training process...')
+        fit_start = datetime.now(timezone.utc)
+        mlflow.log_metric('fit_start', fit_start.timestamp())
         trainer.fit(model, datamodule=datamodule)
+        fit_end = datetime.now(timezone.utc)
+        mlflow.log_metric('fit_end', fit_end.timestamp())
+        mlflow.log_metric("fit_duration", (fit_end - fit_start).total_seconds())
         logging.info('Training completed.')
 
         best_model = MLP.load_from_checkpoint(
@@ -297,25 +272,26 @@ class TrainingJob(MLFlowLoggedJob):
             name="ml_model",
             signature=signature,
         )
-        onnx_path = cache_dir / 'mlp_model.onnx'
+        onnx_path = tmp_dir / 'mlp_model.onnx'
         best_model.to_onnx(onnx_path, export_params=True)
         mlflow.log_artifact(str(onnx_path), artifact_path='onnx_model')
-        self.completed = True
-        mlflow.log_param("completed", self.completed)
         logging.info('Training completed and model logged to MLFlow.')
         shutil.rmtree(str(self.checkpoints_dir))
+
+        end_start = datetime.now(timezone.utc).timestamp()
+        mlflow.log_metric('exec_end', end_start)
+        mlflow.log_metric("exec_duration", end_start - exec_start)
 
     def as_metric_dict(self) -> Dict[str, Any]:
         """
         Converts the metrics of the training job to a dictionary format.
         """
-        return {
+        metric_dict = {
             'run_id': self.run_id,
-            'init': self.init,
-            'fold': self.fold,
-            'completed': self.completed,
             **self.metrics
         }
+        metric_dict.update(self.tags)
+        return metric_dict
 
     @staticmethod
     def get_metrics_df(
@@ -344,21 +320,20 @@ app = typer.Typer(
     help='Create a training run for an MLP model.'
 )
 def create_training(
-    dataset_path: Path,
+    db_path: Path,
+    train_query: str,
     dims: types.DimsType,
-    checkpoints_dir: types.CheckpointsDirType = TrainingJob.model_fields[
-        'checkpoints_dir'].default,
+    val_query: str | None = None,
+    test_query: str | None = None,
+    predict_query: str | None = None,
+    label_col: str | None = TrainingJob.model_fields['label_col'].default,
     activation: types.ActivationType = TrainingJob.model_fields['activation'].default,
-    df_name: types.DfNameType = TrainingJob.model_fields['df_name'].default,
     batch_size: types.BatchSizeType = TrainingJob.model_fields['batch_size'].default,
-    feature_cols: types.FeatureColsType = TrainingJob.model_fields['feature_cols'].default,
-    label_cols: types.LabelColsType = TrainingJob.model_fields['label_cols'].default,
-    init: types.InitType = TrainingJob.model_fields['init'].default,
-    fold: types.FoldType = TrainingJob.model_fields['fold'].default,
-    fold_col: types.FoldColType = TrainingJob.model_fields['fold_col'].default,
+    name: types.JobNameType = TrainingJob.model_fields['name'].default,
     accelerator: types.AcceleratorType = TrainingJob.model_fields['accelerator'].default,
     patience: types.PatienceType = TrainingJob.model_fields['patience'].default,
-    name: types.JobNameType = TrainingJob.model_fields['name'].default,
+    checkpoints_dir: types.CheckpointsDirType = TrainingJob.model_fields[
+        'checkpoints_dir'].default,
     max_epochs: types.MaxEpochsType = TrainingJob.model_fields['max_epochs'].default,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
@@ -373,21 +348,20 @@ def create_training(
     mlflow.set_experiment(experiment_name)
 
     job = TrainingJob(
-        dataset_path=dataset_path,
+        db_path=db_path,
+        train_query=train_query,
         dims=dims,
+        val_query=val_query,
+        test_query=test_query,
+        predict_query=predict_query,
+        label_col=label_col,
         activation=activation,
-        df_name=df_name,
         batch_size=batch_size,
-        feature_cols=feature_cols,
-        label_cols=label_cols,
-        init=init,
-        fold=fold,
-        fold_col=fold_col,
         name=name,
         accelerator=accelerator,
         patience=patience,
         checkpoints_dir=checkpoints_dir,
-        max_epochs=max_epochs,
+        max_epochs=max_epochs
     )
 
     run_id = job.to_mlflow()
@@ -424,15 +398,17 @@ def run_training(
 
 
 class KFoldTrainingJob(MLFlowLoggedJob):
-    dataset_path: Path
+    db_path: Path
+    table_name: str
     dims: types.DimsType
+    best_metric: types.BestMetricType
+    best_metric_mode: types.BestMetricModeType
+    rings_col: str = 'rings'
+    label_col: str = 'label'
+    fold_col: str = 'fold'
     activation: types.ActivationType = TrainingJob.model_fields['activation'].default
-    df_name: types.DfNameType = TrainingJob.model_fields['df_name'].default
     batch_size: types.BatchSizeType = TrainingJob.model_fields['batch_size'].default
-    feature_cols: types.FeatureColsType = TrainingJob.model_fields['feature_cols'].default
-    label_cols: types.LabelColsType = TrainingJob.model_fields['label_cols'].default
     inits: types.InitsType = 5
-    fold_col: types.FoldColType = TrainingJob.model_fields['fold_col'].default
     folds: types.FoldType = 5
     run_id: types.MLFlowRunId = None
     name: types.JobNameType = 'MLP K-Fold Training Job'
@@ -441,19 +417,6 @@ class KFoldTrainingJob(MLFlowLoggedJob):
     checkpoints_dir: types.CheckpointsDirType = TrainingJob.model_fields[
         'checkpoints_dir'].default
     max_epochs: types.MaxEpochsType = TrainingJob.model_fields['max_epochs'].default
-    completed: bool = False
-    best_metric: types.BestMetricType
-    best_metric_mode: types.BestMetricModeType
-
-    def model_post_init(self, context):
-        super().model_post_init(context)
-
-        if self.dims[0] != len(self.feature_cols):
-            raise ValueError(
-                f'Input dimension {self.dims[0]} does not match feature columns {len(self.feature_cols)}')
-
-        if self.dims[-1] != 1:
-            raise ValueError(f'Output dimension {self.dims[-1]} must be 1')
 
     @contextmanager
     def to_mlflow_context(self,
@@ -461,33 +424,52 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                           tags: List[str] = [],
                           extra_tags: Dict[str, Any] = {}):
         extra_tags['model'] = 'MLP'
+        val_query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} = {fold} AND {fold_col} >= 0;"
+        train_query_template = val_query_template.replace(
+            "{fold_col} = {fold}", "{fold_col} != {fold}")
+        feature_cols_str = ', '.join(
+            [f'{self.rings_col}[{i+1}]' for i in range(N_RINGS)])
         with super().to_mlflow_context(nested=nested, tags=tags, extra_tags=extra_tags) as run:
             logging.info(
                 f'Creating K-Fold training job with run ID: {run.info.run_id}')
             for init, fold in product(range(self.inits), range(self.folds)):
-                training_job = TrainingJob(
-                    dataset_path=self.dataset_path,
-                    dims=self.dims,
-                    activation=self.activation,
-                    df_name=self.df_name,
-                    batch_size=self.batch_size,
-                    feature_cols=self.feature_cols,
-                    label_cols=self.label_cols,
-                    init=init,
-                    fold=fold,
+                train_query = train_query_template.format(
+                    feature_cols_str=feature_cols_str,
+                    label_col=self.label_col,
+                    table_name=self.table_name,
                     fold_col=self.fold_col,
-                    name=f'{self.name} init {init} fold {fold}',
+                    fold=fold
+                )
+                val_query = val_query_template.format(
+                    feature_cols_str=feature_cols_str,
+                    label_col=self.label_col,
+                    table_name=self.table_name,
+                    fold_col=self.fold_col,
+                    fold=fold
+                )
+                training_job = TrainingJob(
+                    db_path=self.db_path,
+                    train_query=train_query,
+                    val_query=val_query,
+                    dims=self.dims,
+                    label_col=self.label_col,
+                    activation=self.activation,
+                    batch_size=self.batch_size,
+                    name=self.name,
                     accelerator=self.accelerator,
                     patience=self.patience,
-                    checkpoints_dir=self.checkpoints_dir /
-                    f'fold_{fold}_init_{init}',
+                    checkpoints_dir=self.checkpoints_dir,
                     max_epochs=self.max_epochs
                 )
+                extra_tags['init'] = init
+                extra_tags['fold'] = fold
                 run_id = training_job.to_mlflow(
                     nested=True, tags=tags, extra_tags=extra_tags)
                 logging.info(
                     f'Created child training job with run ID: {run_id}')
-            logging.info(f'K-Fold training job with run ID: {run.info.run_id} completed.')
+
+            logging.info(
+                f'K-Fold training job with run ID: {run.info.run_id} completed.')
             yield run
 
     # Unable to use mlflow.entities.run.Run because it is not compatible with pydantic
@@ -520,10 +502,14 @@ class KFoldTrainingJob(MLFlowLoggedJob):
 
         return children_jobs
 
-    def exec(self, cache_dir: Path,
+    def exec(self, tmp_dir: Path,
              experiment_name: str,
              tracking_uri: str | None,
              force: Literal['all', 'error'] | None = None):
+
+        exec_start = datetime.now(timezone.utc).timestamp()
+        mlflow.log_metric('exec_start', exec_start)
+        logging.info(f'Starting K-Fold training job with run ID: {self.run_id} in experiment: {experiment_name}')
         children = self.get_children(experiment_name, tracking_uri)
         if not children:
             raise RuntimeError('No child training jobs found.')
@@ -534,31 +520,32 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             child_run_id = child.info.run_id
             child_job = TrainingJob.from_mlflow(child_run_id)
             logging.info(
-                f'Running child training job with: run ID - {child_run_id} - fold - {child_job.fold} - init - {child_job.init}')
+                f'Running child training job with: run ID - {child_run_id} - fold - {child_job.tags["fold"]} - init - {child_job.tags["init"]}')
             child_job.execute(experiment_name=experiment_name,
                               tracking_uri=tracking_uri,
                               nested=True,
                               force=force)
             children_jobs.append(child_job)
 
-        children_metrics_df, metric_names = TrainingJob.get_metrics_df(
+        job_metrics_df_artifact = 'job_metrics.csv'
+        job_metrics_df, metric_names = TrainingJob.get_metrics_df(
             children_jobs)
+        job_metrics_df_path = tmp_dir / job_metrics_df_artifact
+        job_metrics_df.to_csv(job_metrics_df_path, index=False)
+
         if self.best_metric_mode == 'min':
-            best_idx = children_metrics_df[self.best_metric].idxmin()
+            best_idx = job_metrics_df[self.best_metric].idxmin()
         elif self.best_metric_mode == 'max':
-            best_idx = children_metrics_df[self.best_metric].idxmax()
+            best_idx = job_metrics_df[self.best_metric].idxmax()
         else:
             raise ValueError(
                 f'Unsupported best metric mode: {self.best_metric_mode}')
-        best_metrics = children_metrics_df.loc[best_idx]
+        best_metrics = job_metrics_df.loc[best_idx]
         mlflow.log_param("best_job_run_id", best_metrics['run_id'])
         mlflow.log_param("best_job_fold", best_metrics['fold'])
         mlflow.log_param("best_job_init", best_metrics['init'])
 
-        children_metrics_df_path = cache_dir / 'job_metrics.csv'
-        children_metrics_df.to_csv(
-            children_metrics_df_path, index=False)
-        mlflow.log_artifact(str(children_metrics_df_path))
+        mlflow.log_artifact(str(job_metrics_df_path))
 
         aggregation_dict = dict()
         for metric in metric_names:
@@ -572,32 +559,35 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                 column=metric, aggfunc='max')
             aggregation_dict[f'{metric}_median'] = pd.NamedAgg(
                 column=metric, aggfunc='median')
-        aggregated_metrics = children_metrics_df \
+        aggregated_metrics = job_metrics_df \
             .groupby('fold').agg(**aggregation_dict) \
             .reset_index() \
             .melt(id_vars='fold',
                   var_name='metric')
-        aggregated_metrics_path = cache_dir / 'aggregated_metrics.csv'
+        aggregated_metrics_path = tmp_dir / 'aggregated_metrics.csv'
         aggregated_metrics.to_csv(aggregated_metrics_path, index=False)
         mlflow.log_artifact(str(aggregated_metrics_path))
 
-        best_metric_label = self.best_metric.replace('_', ' ').capitalize()
-        fig = px.box(children_metrics_df, x="fold", y=self.best_metric)
-        fig.update_layout(
-            title=f'K-Fold {best_metric_label} Distribution',
-            xaxis_title='Fold',
-            yaxis_title=best_metric_label
-        )
-        fig.add_hline(y=best_metrics[self.best_metric],
-                      line_dash="dash",
-                      line_color="red",
-                      annotation_text='Best',
-                      annotation_position="top left")
-        mlflow.log_figure(fig, f'{self.best_metric}_box_plot.html')
+        box_plot_artifact = f'{self.best_metric}_box_plot.html'
+        if not self.artifact_exists(box_plot_artifact):
+            best_metric_label = self.best_metric.replace('_', ' ').capitalize()
+            fig = px.box(job_metrics_df, x="fold", y=self.best_metric)
+            fig.update_layout(
+                title=f'K-Fold {best_metric_label} Distribution',
+                xaxis_title='Fold',
+                yaxis_title=best_metric_label
+            )
+            fig.add_hline(y=best_metrics[self.best_metric],
+                          line_dash="dash",
+                          line_color="red",
+                          annotation_text='Best',
+                          annotation_position="top left")
+            mlflow.log_figure(fig, box_plot_artifact)
 
-        self.completed = True
-        mlflow.log_param("completed", True)
         logging.info('K-Fold training jobs completed and logged to MLFlow.')
+        exec_end = datetime.now(timezone.utc).timestamp()
+        mlflow.log_metric('exec_end', exec_end)
+        mlflow.log_metric("exec_duration", exec_end - exec_start)
 
 
 DatasetPathType = Annotated[
@@ -612,26 +602,26 @@ DatasetPathType = Annotated[
     help='Create a K-Fold training run for an MLP model.'
 )
 def create_kfold(
-    dataset_path: DatasetPathType,
+    db_path: Path,
+    table_name: str,
     dims: types.DimsType,
     best_metric: types.BestMetricType,
     best_metric_mode: types.BestMetricModeType,
-    checkpoints_dir: types.CheckpointsDirType = KFoldTrainingJob.model_fields[
-        'checkpoints_dir'].default,
+    rings_col: str = KFoldTrainingJob.model_fields['rings_col'].default,
+    label_col: str = KFoldTrainingJob.model_fields['label_col'].default,
+    fold_col: str = KFoldTrainingJob.model_fields['fold_col'].default,
     activation: types.ActivationType = KFoldTrainingJob.model_fields['activation'].default,
-    df_name: types.DfNameType = KFoldTrainingJob.model_fields['df_name'].default,
     batch_size: types.BatchSizeType = KFoldTrainingJob.model_fields['batch_size'].default,
-    feature_cols: types.FeatureColsType = KFoldTrainingJob.model_fields['feature_cols'].default,
-    label_cols: types.LabelColsType = KFoldTrainingJob.model_fields['label_cols'].default,
     inits: types.InitsType = KFoldTrainingJob.model_fields['inits'].default,
-    fold_col: types.FoldColType = KFoldTrainingJob.model_fields['fold_col'].default,
     folds: types.FoldType = KFoldTrainingJob.model_fields['folds'].default,
+    name: types.JobNameType = KFoldTrainingJob.model_fields['name'].default,
     accelerator: types.AcceleratorType = KFoldTrainingJob.model_fields['accelerator'].default,
     patience: types.PatienceType = KFoldTrainingJob.model_fields['patience'].default,
+    checkpoints_dir: types.CheckpointsDirType = KFoldTrainingJob.model_fields['checkpoints_dir'].default,
+    max_epochs: types.MaxEpochsType = KFoldTrainingJob.model_fields['max_epochs'].default,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
-    max_epochs: types.MaxEpochsType = KFoldTrainingJob.model_fields['max_epochs'].default,
-    name: types.JobNameType = KFoldTrainingJob.model_fields['name'].default,
+
 ) -> str:
 
     set_logger()
@@ -643,23 +633,23 @@ def create_kfold(
     mlflow.set_experiment(experiment_name)
 
     job = KFoldTrainingJob(
-        dataset_path=dataset_path,
+        db_path=db_path,
+        table_name=table_name,
         dims=dims,
-        activation=activation,
-        df_name=df_name,
-        batch_size=batch_size,
-        feature_cols=feature_cols,
-        label_cols=label_cols,
-        inits=inits,
+        best_metric=best_metric,
+        best_metric_mode=best_metric_mode,
+        rings_col=rings_col,
+        label_col=label_col,
         fold_col=fold_col,
+        activation=activation,
+        batch_size=batch_size,
+        inits=inits,
         folds=folds,
         name=name,
         accelerator=accelerator,
         patience=patience,
         checkpoints_dir=checkpoints_dir,
-        max_epochs=max_epochs,
-        best_metric=best_metric,
-        best_metric_mode=best_metric_mode
+        max_epochs=max_epochs
     )
 
     run_id = job.to_mlflow()
@@ -690,4 +680,5 @@ def run_kfold(
     job = KFoldTrainingJob.from_mlflow(run_id)
 
     job.execute(experiment_name=experiment_name,
-                tracking_uri=tracking_uri)
+                tracking_uri=tracking_uri,
+                force=force)

@@ -137,7 +137,7 @@ FeatureColsType = Annotated[
 ]
 
 LABEL_COLS_DESCRIPTION = (
-    "List of label column names in the DataFrame.."
+    "List of label column names in the DataFrame."
 )
 
 LabelColsType = Annotated[
