@@ -675,6 +675,7 @@ def run_kfold(
     run_id: str,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
+    force: str | None = None
 ):
     set_logger()
     logging.info(f'Running K-Fold training job with run ID: {run_id}')
