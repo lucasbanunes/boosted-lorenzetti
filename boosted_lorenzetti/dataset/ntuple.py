@@ -541,8 +541,7 @@ class CreateDatabaseJob(MLFlowLoggedJob):
         )
 
 
-@app.command()
-def create_dataset(ntuple_paths: List[Path],
+def create_dataset(ntuple_paths: List[str],
                    labels: List[int],
                    output_path: Path,
                    lzt_version: str,
@@ -581,3 +580,38 @@ def create_dataset(ntuple_paths: List[Path],
     job.execute()
 
     return job.output_path
+
+
+# Typer doesn seem to work well with multiple list arguments.
+# we get an error TypeError: Cannot have two nargs < 0
+# https://github.com/fastapi/typer/issues/260
+@app.command(
+    help="Create a dataset from the ntuple root files."
+)
+def cli_create_dataset(
+    ntuple_files: List[str],
+    output_path: Path = typer.Option(..., help="Path to the output DuckDB file."),
+    lzt_version: str = typer.Option(..., help="Version of the boosted-lorenzetti library."),
+    tracking_uri: str | None = None,
+    experiment_name: str = 'boosted-lorenzetti',
+    n_folds: int = CreateDatabaseJob.model_fields['n_folds'].default,
+    seed: int = CreateDatabaseJob.model_fields['seed'].default,
+    description: str = CreateDatabaseJob.model_fields['description'].default,
+    table_name: str = CreateDatabaseJob.model_fields['table_name'].default,
+    query: str | None = CreateDatabaseJob.model_fields['query'].default
+):
+    ntuple_paths = [Path(p) for p in ntuple_files[::2]]
+    labels = [int(value) for value in ntuple_files[1::2]]
+    return create_dataset(
+        ntuple_paths=ntuple_paths,
+        labels=labels,
+        output_path=output_path,
+        lzt_version=lzt_version,
+        tracking_uri=tracking_uri,
+        experiment_name=experiment_name,
+        n_folds=n_folds,
+        seed=seed,
+        description=description,
+        table_name=table_name,
+        query=query
+    )
