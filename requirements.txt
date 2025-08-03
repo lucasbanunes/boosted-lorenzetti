@@ -12,7 +12,9 @@ cloudpickle==3.1.1
 contourpy==1.3.2
 cycler==0.12.1
 databricks-sdk==0.59.0
+diffusers[pytorch]==0.34.0
 docker==7.1.0
+duckdb==1.3.2
 fastapi==0.116.1
 filelock==3.18.0
 Flask==3.1.1
@@ -68,6 +70,7 @@ pandas==2.3.1
 pillow==11.3.0
 plotly==6.2.0
 pluggy==1.6.0
+polars==1.32.0
 propcache==0.3.2
 protobuf==6.31.1
 pyarrow==20.0.0
@@ -94,6 +97,7 @@ threadpoolctl==3.6.0
 torch==2.7.1
 torchmetrics==1.7.4
 tqdm
+transformers==4.54.1
 triton==3.3.1
 typer==0.16.0
 typing-inspection==0.4.1
