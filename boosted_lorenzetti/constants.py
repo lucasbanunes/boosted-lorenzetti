@@ -13,3 +13,5 @@ RINGS_LAYERS = OrderedDict(
 )
 
 RINGS_LIMITS = [8, 72, 80, 88, 92, 96]
+
+NO_FOLD_VALUE = -1

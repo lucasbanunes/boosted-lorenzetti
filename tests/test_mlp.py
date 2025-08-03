@@ -51,6 +51,7 @@ def test_kfold_training(test_dataset_path: Path):
         dataset_path=test_dataset_path,
         dims=[N_RINGS, 1],
         folds=5,
+        inits=1,
         experiment_name=experiment_name,
         max_epochs=2,
         best_metric='val_max_sp',

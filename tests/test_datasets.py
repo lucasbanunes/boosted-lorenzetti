@@ -1,41 +1,61 @@
 from pathlib import Path
 import pandas as pd
+import duckdb
 
-from boosted_lorenzetti.dataset.convert import convert
-from boosted_lorenzetti.dataset.ingest import ingest
+from boosted_lorenzetti.dataset import ntuple
 
 
-def test_convert_ntuple2parquet(test_data_dir: Path,
-                                tmp_path: Path):
+def test_convert_ntuple_to_parquet(test_data_dir: Path,
+                                   tmp_path: Path):
     test_file = test_data_dir / 'test.NTUPLE.root'
-    convert([test_file],
-            input_format='ntuple',
-            output_format='parquet',
-            output_dir=tmp_path,
-            n_jobs=1)
     output_file = tmp_path / 'test.NTUPLE.parquet'
+    ntuple.to_parquet([str(test_file)],
+                      output_file=str(output_file),
+                      ttree_name='physics')
     assert output_file.exists(), "Converted file does not exist."
 
     # Testing if converted format is readable
-    assert pd.read_parquet(
-        output_file).shape[0] > 0, "Parquet file is empty or unreadable."
+    assert pd.read_parquet(output_file, dtype_backend='pyarrow').shape[0] > 0, "Parquet file is empty or unreadable."
 
 
-def test_ingest(test_data_dir: Path,
-                tmp_path: Path):
+def test_convert_ntuple_to_duckdb(test_data_dir: Path,
+                                  tmp_path: Path):
+    test_file = test_data_dir / 'test.NTUPLE.root'
+    output_file = tmp_path / 'test.NTUPLE.duckdb'
+    ntuple.to_duckdb(input_file=str(test_file),
+                     output_file=str(output_file),
+                     ttree_name='physics',
+                     table_name='physics',
+                     open_vectors=False)
+    assert output_file.exists(), "Converted DuckDB file does not exist."
+    # Testing if converted format is readable
+    with duckdb.connect(str(output_file)) as con:
+        df = con.execute("SELECT * FROM physics").pl()
+    assert len(df) > 0, "DuckDB file is empty or unreadable."
+
+
+def test_create_dataset(test_data_dir: Path,
+                        tmp_path: Path):
     electron_dataset = test_data_dir / 'zee_dataset'
     jet_dataset = test_data_dir / 'jf17_dataset'
-    output_dir = tmp_path / 'ingest_output'
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = tmp_path / 'test_create_dataset.duckdb'
+    table_name = 'ntuple'
+    output_file = ntuple.create_dataset(
+        ntuple_paths=[
+            electron_dataset,
+            jet_dataset
+        ],
+        labels=[1, 0],
+        output_path=output_path,
+        lzt_version='vTest',
+        n_folds=2,
+        seed=42,
+        table_name=table_name,
+        experiment_name='text_create_dataset',
+    )
 
-    _, _, output_file = ingest(electron_dataset=str(electron_dataset),
-                               jet_dataset=str(jet_dataset),
-                               name='test_ingest',
-                               output_dir=output_dir,
-                               lzt_version='1.0.0',
-                               n_folds=2,
-                               seed=42)
-
-    assert output_file.exists(), "Ingested dataset does not exist."
-    assert pd.read_parquet(
-        output_file).shape[0] > 0, "Ingested dataset is empty or unreadable."
+    assert output_file.exists(), "Created dataset does not exist."
+    # Testing if created dataset is readable
+    with duckdb.connect(str(output_file)) as con:
+        df = con.execute(f"SELECT * FROM {table_name}").fetchdf()
+    assert len(df) > 0, "Created dataset is empty or unreadable."

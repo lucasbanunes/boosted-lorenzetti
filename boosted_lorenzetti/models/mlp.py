@@ -1,4 +1,5 @@
-from functools import cached_property
+from contextlib import contextmanager
+from itertools import product
 import mlflow.entities
 import torch
 import torch.nn as nn
@@ -18,14 +19,9 @@ from torchmetrics.classification import (
 from mlflow.models import infer_signature
 import numpy as np
 from sklearn.utils.class_weight import compute_class_weight
-# from sklearn.model_selection import StratifiedKFold
-from pydantic import BaseModel, computed_field
-import json
 import logging
-from itertools import product
 import shutil
 import pandas as pd
-from tempfile import TemporaryDirectory
 import plotly.express as px
 
 from ..data import tensor_dataset_from_df
@@ -35,6 +31,7 @@ from ..log import set_logger
 from ..cross_validation import ColumnKFold
 from .. import types
 from ..constants import N_RINGS
+from ..jobs import MLFlowLoggedJob
 
 
 class MLP(L.LightningModule):
@@ -155,7 +152,7 @@ class MLP(L.LightningModule):
         return optimizer
 
 
-class TrainingJob(BaseModel):
+class TrainingJob(MLFlowLoggedJob):
     dataset_path: Path
     dims: types.DimsType
     activation: types.ActivationType = 'relu'
@@ -167,7 +164,7 @@ class TrainingJob(BaseModel):
     fold: types.FoldType = 0
     fold_col: types.FoldColType = 'fold'
     run_id: types.MLFlowRunId = None
-    job_name: types.JobNameType = 'MLP Training Job'
+    name: types.JobNameType = 'MLP Training Job'
     accelerator: types.AcceleratorType = 'cpu'
     patience: types.PatienceType = 10
     checkpoints_dir: types.CheckpointsDirType = Path('checkpoints/')
@@ -184,65 +181,19 @@ class TrainingJob(BaseModel):
         if self.dims[-1] != 1:
             raise ValueError(f'Output dimension {self.dims[-1]} must be 1')
 
-    @computed_field
-    @cached_property
-    def run(self) -> Any:  # Unable to use mlflow.entities.run.Run because it is not compatible with pydantic
-        if self.run_id is None:
-            raise ValueError("Run ID must be set before accessing the run.")
-        client = mlflow.MlflowClient()
-        return client.get_run(self.run_id)
+    def to_mlflow(self,
+                  nested: bool = False,
+                  tags: List[str] = [],
+                  extra_tags: Dict[str, Any] = {}) -> str:
+        extra_tags['model'] = 'MLP'
+        return super().to_mlflow(nested=nested,
+                                 tags=tags,
+                                 extra_tags=extra_tags)
 
-    @computed_field
-    @property
-    def metrics(self) -> Dict[str, float]:
-        return self.run.data.metrics  # type: ignore
-
-    @classmethod
-    def from_mlflow(cls, run_id: str) -> 'TrainingJob':
-        logging.debug(f'Loading training job from MLFlow run ID: {run_id}')
-        client = mlflow.MlflowClient()
-        run = client.get_run(run_id)
-        params = run.data.params
-        params['dataset_path'] = Path(params['dataset_path'])
-        params['dims'] = json.loads(params['dims'])
-        params['feature_cols'] = json.loads(params['feature_cols'])
-        params['label_cols'] = json.loads(params['label_cols'])
-        params['checkpoints_dir'] = Path(params['checkpoints_dir'])
-        params['run_id'] = run_id
-        return cls(**params)
-
-    def to_mlflow(self, nested: bool = False) -> str:
-        tags = {
-            'init': self.init,
-            'fold': self.fold,
-            'model': 'MLP',
-        }
-
-        params = self.model_dump(
-            exclude=[
-                'completed',
-                'run',
-                'metrics'
-            ]
-        )
-        params['dims'] = json.dumps(self.dims)
-        params['feature_cols'] = json.dumps(self.feature_cols)
-        params['label_cols'] = json.dumps(self.label_cols)
-
-        with mlflow.start_run(run_name=self.job_name,
-                              tags=tags,
-                              nested=nested) as run:
-            mlflow.log_params(params)
-        self.run_id = run.info.run_id
-        return self.run_id
-
-    def _exec(self,
-              cache_dir: Path,
-              experiment_name: str,
-              tracking_uri: str | None = None):
-        if self.completed:
-            logging.info('Training job already completed.')
-            return
+    def exec(self,
+             cache_dir: Path,
+             experiment_name: str,
+             tracking_uri: str | None = None):
         file_dataset = FileDataset(self.dataset_path)
         load_cols = self.feature_cols + self.label_cols + [self.fold_col, 'id']
         data_df = file_dataset.get_df(self.df_name,
@@ -299,7 +250,7 @@ class TrainingJob(BaseModel):
 
         logger = MLFlowLogger(
             experiment_name=experiment_name,
-            run_name=self.job_name,
+            run_name=self.name,
             tracking_uri=tracking_uri,
             run_id=self.run_id
         )
@@ -354,42 +305,6 @@ class TrainingJob(BaseModel):
         logging.info('Training completed and model logged to MLFlow.')
         shutil.rmtree(str(self.checkpoints_dir))
 
-    def exec(self,
-             experiment_name: str,
-             tracking_uri: str,
-             nested: bool = False,
-             force: Literal['all', 'error'] | None = None):
-        if self.run_id is None:
-            raise ValueError()
-
-        if self.completed and force != 'all':
-            logging.info('Training job already completed. Skipping execution.')
-            return
-
-        start_run_params = dict(
-            nested=nested
-        )
-
-        old_id = None
-        if force and self.run_id:
-            old_id = self.run_id
-            self.run_id = None
-            # Creates the new run with a new ID
-            self.to_mlflow(nested=nested)
-        if force and not self.run_id:
-            pass
-        else:
-            start_run_params['run_id'] = self.run_id
-
-        with (mlflow.start_run(**start_run_params) as run,
-              TemporaryDirectory() as temp_dir):
-            self._exec(Path(temp_dir), experiment_name, tracking_uri)
-            self.run_id = run.info.run_id
-
-        if old_id:
-            client = mlflow.MlflowClient()
-            client.delete_run(old_id)
-
     def as_metric_dict(self) -> Dict[str, Any]:
         """
         Converts the metrics of the training job to a dictionary format.
@@ -443,7 +358,7 @@ def create_training(
     fold_col: types.FoldColType = TrainingJob.model_fields['fold_col'].default,
     accelerator: types.AcceleratorType = TrainingJob.model_fields['accelerator'].default,
     patience: types.PatienceType = TrainingJob.model_fields['patience'].default,
-    job_name: types.JobNameType = TrainingJob.model_fields['job_name'].default,
+    name: types.JobNameType = TrainingJob.model_fields['name'].default,
     max_epochs: types.MaxEpochsType = TrainingJob.model_fields['max_epochs'].default,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
@@ -468,7 +383,7 @@ def create_training(
         init=init,
         fold=fold,
         fold_col=fold_col,
-        job_name=job_name,
+        name=name,
         accelerator=accelerator,
         patience=patience,
         checkpoints_dir=checkpoints_dir,
@@ -504,11 +419,11 @@ def run_training(
     for run_id in run_ids:
         logging.info(f'Running training job with run ID: {run_id}')
         job = TrainingJob.from_mlflow(run_id)
-        job.exec(experiment_name=experiment_name,
-                 tracking_uri=tracking_uri)
+        job.execute(experiment_name=experiment_name,
+                    tracking_uri=tracking_uri)
 
 
-class KFoldTrainingJob(BaseModel):
+class KFoldTrainingJob(MLFlowLoggedJob):
     dataset_path: Path
     dims: types.DimsType
     activation: types.ActivationType = TrainingJob.model_fields['activation'].default
@@ -520,7 +435,7 @@ class KFoldTrainingJob(BaseModel):
     fold_col: types.FoldColType = TrainingJob.model_fields['fold_col'].default
     folds: types.FoldType = 5
     run_id: types.MLFlowRunId = None
-    job_name: types.JobNameType = 'MLP K-Fold Training Job'
+    name: types.JobNameType = 'MLP K-Fold Training Job'
     accelerator: types.AcceleratorType = TrainingJob.model_fields['accelerator'].default
     patience: types.PatienceType = TrainingJob.model_fields['patience'].default
     checkpoints_dir: types.CheckpointsDirType = TrainingJob.model_fields[
@@ -540,46 +455,15 @@ class KFoldTrainingJob(BaseModel):
         if self.dims[-1] != 1:
             raise ValueError(f'Output dimension {self.dims[-1]} must be 1')
 
-    @computed_field
-    @cached_property
-    def run(self) -> Any:  # Unable to use mlflow.entities.run.Run because it is not compatible with pydantic
-        if self.run_id is None:
-            raise ValueError("Run ID must be set before accessing the run.")
-        client = mlflow.MlflowClient()
-        return client.get_run(self.run_id)
-
-    @classmethod
-    def from_mlflow(cls, run_id: str) -> 'KFoldTrainingJob':
-        logging.debug(
-            f'Loading K-Fold training job from MLFlow run ID: {run_id}')
-        client = mlflow.MlflowClient()
-        run = client.get_run(run_id)
-        params = run.data.params
-        params['dataset_path'] = Path(params['dataset_path'])
-        params['dims'] = json.loads(params['dims'])
-        params['feature_cols'] = json.loads(params['feature_cols'])
-        params['label_cols'] = json.loads(params['label_cols'])
-        params['checkpoints_dir'] = Path(params['checkpoints_dir'])
-        params['run_id'] = run_id
-        return cls(**params)
-
-    def to_mlflow(self, nested: bool = False) -> str:
-        tags = {
-            'model': 'MLP',
-        }
-
-        params = self.model_dump(
-            exclude=[
-                'completed',
-                'run',
-                'run_id'
-            ]
-        )
-        params['dims'] = json.dumps(self.dims)
-        params['feature_cols'] = json.dumps(self.feature_cols)
-        params['label_cols'] = json.dumps(self.label_cols)
-
-        with mlflow.start_run(run_name=self.job_name, tags=tags, nested=nested) as run:
+    @contextmanager
+    def to_mlflow_context(self,
+                          nested: bool = False,
+                          tags: List[str] = [],
+                          extra_tags: Dict[str, Any] = {}):
+        extra_tags['model'] = 'MLP'
+        with super().to_mlflow_context(nested=nested, tags=tags, extra_tags=extra_tags) as run:
+            logging.info(
+                f'Creating K-Fold training job with run ID: {run.info.run_id}')
             for init, fold in product(range(self.inits), range(self.folds)):
                 training_job = TrainingJob(
                     dataset_path=self.dataset_path,
@@ -591,21 +475,20 @@ class KFoldTrainingJob(BaseModel):
                     label_cols=self.label_cols,
                     init=init,
                     fold=fold,
-                    job_name=self.job_name,
+                    fold_col=self.fold_col,
+                    name=f'{self.name} init {init} fold {fold}',
                     accelerator=self.accelerator,
                     patience=self.patience,
                     checkpoints_dir=self.checkpoints_dir /
-                    f'init_{init}_fold_{fold}',
+                    f'fold_{fold}_init_{init}',
                     max_epochs=self.max_epochs
                 )
-                training_job.to_mlflow(nested=True)
-                logging.debug(
-                    f'Dumped training job for init {init}, fold {fold}.')
-            mlflow.log_params(params)
-
-        self.run_id = run.info.run_id
-        logging.info(f'Model dumped to MLFlow with run ID: {self.run_id}')
-        return self.run_id
+                run_id = training_job.to_mlflow(
+                    nested=True, tags=tags, extra_tags=extra_tags)
+                logging.info(
+                    f'Created child training job with run ID: {run_id}')
+            logging.info(f'K-Fold training job with run ID: {run.info.run_id} completed.')
+            yield run
 
     # Unable to use mlflow.entities.run.Run because it is not compatible with pydantic
     def get_children(self, experiment_name: str, tracking_uri: str | None = None) -> List[Any]:
@@ -637,19 +520,13 @@ class KFoldTrainingJob(BaseModel):
 
         return children_jobs
 
-    def _exec(self, cache_dir: Path,
-              experiment_name: str,
-              tracking_uri: str | None,
-              force: Literal['all', 'error'] | None = None):
+    def exec(self, cache_dir: Path,
+             experiment_name: str,
+             tracking_uri: str | None,
+             force: Literal['all', 'error'] | None = None):
         children = self.get_children(experiment_name, tracking_uri)
-
-        if self.completed and force != 'all':
-            logging.info('Job already completed. Skipping execution.')
-            return
-
         if not children:
-            logging.critical('No child training jobs found.')
-            return
+            raise RuntimeError('No child training jobs found.')
 
         children_jobs = []
 
@@ -658,10 +535,10 @@ class KFoldTrainingJob(BaseModel):
             child_job = TrainingJob.from_mlflow(child_run_id)
             logging.info(
                 f'Running child training job with: run ID - {child_run_id} - fold - {child_job.fold} - init - {child_job.init}')
-            child_job.exec(experiment_name=experiment_name,
-                           tracking_uri=tracking_uri,
-                           nested=True,
-                           force=force)
+            child_job.execute(experiment_name=experiment_name,
+                              tracking_uri=tracking_uri,
+                              nested=True,
+                              force=force)
             children_jobs.append(child_job)
 
         children_metrics_df, metric_names = TrainingJob.get_metrics_df(
@@ -722,16 +599,6 @@ class KFoldTrainingJob(BaseModel):
         mlflow.log_param("completed", True)
         logging.info('K-Fold training jobs completed and logged to MLFlow.')
 
-    def exec(self,
-             experiment_name: str,
-             tracking_uri: str | None = None,
-             nested: bool = False):
-        if self.run_id is None:
-            raise ValueError("Run ID must be set before running the job.")
-        with (mlflow.start_run(self.run_id, nested=nested),
-              TemporaryDirectory() as temp_dir):
-            self._exec(Path(temp_dir), experiment_name, tracking_uri)
-
 
 DatasetPathType = Annotated[
     Path,
@@ -764,7 +631,7 @@ def create_kfold(
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
     max_epochs: types.MaxEpochsType = KFoldTrainingJob.model_fields['max_epochs'].default,
-    job_name: types.JobNameType = KFoldTrainingJob.model_fields['job_name'].default,
+    name: types.JobNameType = KFoldTrainingJob.model_fields['name'].default,
 ) -> str:
 
     set_logger()
@@ -786,7 +653,7 @@ def create_kfold(
         inits=inits,
         fold_col=fold_col,
         folds=folds,
-        job_name=job_name,
+        name=name,
         accelerator=accelerator,
         patience=patience,
         checkpoints_dir=checkpoints_dir,
@@ -821,5 +688,5 @@ def run_kfold(
 
     job = KFoldTrainingJob.from_mlflow(run_id)
 
-    job.exec(experiment_name=experiment_name,
-             tracking_uri=tracking_uri)
+    job.execute(experiment_name=experiment_name,
+                tracking_uri=tracking_uri)

@@ -1,13 +1,14 @@
-from enum import Enum
+import json
 import logging
 from tempfile import TemporaryDirectory
-from pydantic import BaseModel, PrivateAttr, computed_field
-from typing import Annotated, Any, Dict, Literal, List
+from pydantic import BaseModel, Field, PrivateAttr, computed_field
+from typing import Annotated, Any, Dict, Literal, List, ClassVar
 import mlflow
 from abc import ABC, abstractmethod
 from pathlib import Path
 from datetime import datetime
 from contextlib import contextmanager
+import numpy as np
 
 from . import types
 from .utils import unflatten_dict
@@ -26,15 +27,25 @@ def log_start_end(start_name: str = 'start',
 
 class MLFlowLoggedJob(BaseModel, ABC):
 
-    BASE_DUMP_EXCLUDE = [
-        'run_id', '_mlflow_run', 'run', 'tags', 'name'
+    BASE_DUMP_EXCLUDE: ClassVar[List[str]] = [
+        'run_id', '_mlflow_run', 'run', 'tags', 'name', 'executed', 'metrics'
     ]
 
-    DUMP_EXCLUDE = []
+    DUMP_EXCLUDE: ClassVar[List[str]] = []
 
     name: types.JobNameType
-    run_id: types.RunIdType = None
-    executed: bool = False
+    run_id: Annotated[
+        str,
+        Field(
+            description="The MLFlow run ID associated with this job.",
+        )
+    ] = None
+    executed: Annotated[
+        bool,
+        Field(
+            description="Indicates whether the job has been executed successfully."
+        )
+    ] = False
     _mlflow_run: Annotated[
         Any,
         PrivateAttr()
@@ -51,7 +62,40 @@ class MLFlowLoggedJob(BaseModel, ABC):
         self._mlflow_run = client.get_run(self.run_id)
         return self._mlflow_run
 
-    @abstractmethod
+    @computed_field
+    @property
+    def metrics(self) -> Dict[str, float]:
+        if self.run is None:
+            return {}
+        return self.run.data.metrics  # type: ignore
+
+    @classmethod
+    def load_json_params(cls, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Tries to load string values in the dictionary as JSON.
+        If not possible, keeps the original string value.
+
+        Parameters
+        ----------
+        params : Dict[str, Any]
+            The parameters to load.
+
+        Returns
+        -------
+        Dict[str, Any]
+            A dictionary of parameters loaded from the JSON.
+        """
+        new_params = {}
+        for key, value in params.items():
+            if isinstance(value, str):
+                try:
+                    new_params[key] = json.loads(value)
+                except json.JSONDecodeError:
+                    new_params[key] = value
+            else:
+                new_params[key] = value
+        return new_params
+
     @classmethod
     def from_mlflow(cls, run_id: str) -> 'MLFlowLoggedJob':
         """
@@ -70,7 +114,11 @@ class MLFlowLoggedJob(BaseModel, ABC):
         client = mlflow.MlflowClient()
         run = client.get_run(run_id)
         run_params = unflatten_dict(run.data.params)
-        return cls(**run_params['job'])
+        job_params = run_params.get('job', {})
+        job_params['run_id'] = run_id
+        job_params['name'] = run.info.run_name
+        job_params = cls.load_json_params(job_params)
+        return cls(**job_params)
 
     def __refresh_cache(self):
         """
@@ -80,16 +128,90 @@ class MLFlowLoggedJob(BaseModel, ABC):
         self._mlflow_run = None
         self.run
 
-    @abstractmethod
+    def convert_params(self, value: Any) -> Any:
+        """
+        Convert a parameter value to a format suitable for MLFlow logging.
+
+        Parameters
+        ----------
+        value : Any
+            The value to convert.
+
+        Returns
+        -------
+        Any
+            The converted value.
+        """
+        if isinstance(value, Path):
+            return str(value)
+        elif isinstance(value, datetime):
+            return value.isoformat()
+        elif value is None or isinstance(value, (int, float, str, bool)):
+            return value
+        elif isinstance(value, np.floating):
+            return float(value)
+        elif isinstance(value, np.integer):
+            return int(value)
+        elif isinstance(value, dict):
+            return json.dumps({k: self.convert_params(v) for k, v in value.items()})
+        elif isinstance(value, BaseModel):
+            return self.convert_params(value.model_dump())
+        elif isinstance(value, (list, tuple, set, np.ndarray)):
+            return json.dumps([self.convert_params(v) for v in value])
+        else:
+            raise ValueError(
+                f"Unsupported type for MLFlow logging: {type(value)}")
+
+    @contextmanager
+    def to_mlflow_context(self,
+                          nested: bool = False,
+                          tags: List[str] = [],
+                          extra_tags: Dict[str, Any] = {}):
+        """
+        Routine to log the job to MLFlow.
+
+        This method is used to log the job's parameters, metrics, and artifacts to MLFlow.
+        It should be called within a context manager or an active MLFlow run.
+
+        Parameters
+        ----------
+        nested : bool, optional
+            If True, the job will be logged as a nested run under the current active run.
+            If False, it will be logged as a top-level run. Default is False.
+        tags : List[str], optional
+            A list of class attributes to be added to the MLFlow run as tags.
+        extra_tags : Dict[str, Any], optional
+            A dictionary of additional tags to be added to the MLFlow run.
+
+        Returns
+        -------
+        str
+            The MLFlow run ID of the logged job.
+        """
+
+        params = self.model_dump(
+            exclude=self.DUMP_EXCLUDE + self.BASE_DUMP_EXCLUDE
+        )
+        params = {
+            key: self.convert_params(value)
+            for key, value in params.items()
+        }
+
+        for tag in tags:
+            extra_tags[tag] = getattr(self, tag)
+
+        with mlflow.start_run(run_name=self.name, nested=nested,
+                              tags=extra_tags) as run:
+            self.log_params(params)
+            self.run_id = run.info.run_id
+            yield run
+
     def to_mlflow(self,
                   nested: bool = False,
                   tags: List[str] = [],
                   extra_tags: Dict[str, Any] = {}) -> str:
         """
         Log the job to MLFlow.
-
-        This method should be implemented by subclasses to log the job's parameters,
-        metrics, and artifacts to MLFlow.
 
         Parameters
         ----------
@@ -108,30 +230,23 @@ class MLFlowLoggedJob(BaseModel, ABC):
         str
             The MLFlow run ID of the logged job.
         """
-        params = self.model_dump(
-            exclude=self.DUMP_EXCLUDE + self.BASE_DUMP_EXCLUDE
-        )
-
-        for tag in tags:
-            tags[tag] = getattr(self, tag)
-
-        with mlflow.start_run(run_name=self.name, nested=nested) as run:
-            self.log_params(params)
-            self.run_id = run.info.run_id
-        return self.run_id
+        with self.to_mlflow_context(nested=nested,
+                                    tags=tags,
+                                    extra_tags=extra_tags) as run:
+            return run.info.run_id
 
     @abstractmethod
-    def custom_exec(self,
-                    tmp_dir: Path,
-                    experiment_name: str,
-                    tracking_uri: str | None):
+    def exec(self,
+             tmp_dir: Path,
+             experiment_name: str,
+             tracking_uri: str | None):
         raise NotImplementedError("Subclasses must implement this method.")
 
-    def exec(self,
-             experiment_name: str | None = None,
-             tracking_uri: str | None = None,
-             nested: bool = False,
-             force: Literal['all', 'error'] | None = None):
+    def execute(self,
+                experiment_name: str | None = None,
+                tracking_uri: str | None = None,
+                nested: bool = False,
+                force: Literal['all', 'error'] | None = None):
 
         if self.run:
             self.executed = self.run.data.params.get('executed', False)
@@ -147,7 +262,8 @@ class MLFlowLoggedJob(BaseModel, ABC):
 
         old_id = None
         should_retry_old_run = (
-            self.run_id and ((self.run.info.status != mlflow.entities.RunStatus.FINISHED) or force)
+            self.run_id and self.executed and (
+                (self.run.info.status != mlflow.entities.RunStatus.FINISHED) or force)
         )
         if should_retry_old_run:
             old_id = self.run_id
@@ -168,9 +284,9 @@ class MLFlowLoggedJob(BaseModel, ABC):
                                run_name=self.name),
               TemporaryDirectory() as tmp_dir):
             with log_start_end('exec_start', 'exec_end'):
-                self.custom_exec(Path(tmp_dir),
-                                 experiment_name=experiment_name,
-                                 tracking_uri=tracking_uri)
+                self.exec(Path(tmp_dir),
+                          experiment_name=experiment_name,
+                          tracking_uri=tracking_uri)
                 self.executed = True
                 self.log_param('executed', True)
 

@@ -1,15 +1,13 @@
-from typing import Literal, Union, Iterable, Iterator, Generator, Any
-import os
-from glob import iglob
+from typing import Literal, Iterable, Iterator, Generator, Any
 from numbers import Number
 import logging
 from pathlib import Path
 
 
 def open_directories(
-        paths: Union[Iterable[str], str],
+        paths: str | Path | Iterable[str | Path],
         file_ext: str,
-        dev: bool = False) -> Iterator[str]:
+        dev: bool = False) -> Iterator[Path]:
     """
     Generator that opens all directories in an iterator for
     a specific file extension. This is useful for script cases where
@@ -17,10 +15,12 @@ def open_directories(
 
     Parameters
     ----------
-    paths : Union[Iterable[str], str]
-        Path or paths to look for files with file_ext
+    paths : str | Path | Iterable[str | Path]
+        A single path or an iterable of paths. These can be directories or
+        file paths. If a directory is provided, it will search recursively
+        for files with the specified file extension.
     file_ext : str
-        Te desired file extension to look for
+        The desired file extension to look for
     dev: bool
         If True, the function will yield just the first file found
 
@@ -35,26 +35,29 @@ def open_directories(
         Raised if there is a file that does not have file_ext as its extension
     """
     if isinstance(paths, str):
+        paths = [Path(paths)]
+    elif isinstance(paths, Path):
         paths = [paths]
     for i, ipath in enumerate(paths):
-        if os.path.isdir(ipath):
-            dir_paths = iglob(
-                os.path.join(ipath, '**', f'*.{file_ext}'),
-                recursive=True
-            )
+        if isinstance(ipath, str):
+            ipath = Path(ipath)
+        if dev and i > 0:
+            break
+        elif ipath.is_dir():
+            dir_paths = ipath.glob(f'**/*.{file_ext}')
+            if not dir_paths:
+                continue
             for j, open_path in enumerate(dir_paths):
                 if dev and j > 0:
                     break
                 else:
                     yield open_path
-        elif ipath.endswith(f'.{file_ext}'):
+        elif ipath.suffix == f'.{file_ext}':
             yield ipath
         else:
             raise ValueError(
                 f'{ipath} does not have the expected {file_ext} extension'
             )
-        if dev and i > 0:
-            break
 
 
 def is_between(value: Number, low: Number, high: Number,
