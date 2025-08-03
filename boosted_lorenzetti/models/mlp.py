@@ -261,18 +261,20 @@ class TrainingJob(MLFlowLoggedJob):
         trainer.fit(model, datamodule=datamodule)
         fit_end = datetime.now(timezone.utc)
         mlflow.log_metric('fit_end', fit_end.timestamp())
-        mlflow.log_metric("fit_duration", (fit_end - fit_start).total_seconds())
+        mlflow.log_metric(
+            "fit_duration", (fit_end - fit_start).total_seconds())
         logging.info('Training completed.')
 
         best_model = MLP.load_from_checkpoint(
             checkpoint.best_model_path
         )
+        mlflow.log_artifact(checkpoint.best_model_path, artifact_path='model.ckpt')
         mlflow.pytorch.log_model(
             pytorch_model=best_model,
             name="ml_model",
             signature=signature,
         )
-        onnx_path = tmp_dir / 'mlp_model.onnx'
+        onnx_path = tmp_dir / 'model.onnx'
         best_model.to_onnx(onnx_path, export_params=True)
         mlflow.log_artifact(str(onnx_path), artifact_path='onnx_model')
         logging.info('Training completed and model logged to MLFlow.')
@@ -509,7 +511,8 @@ class KFoldTrainingJob(MLFlowLoggedJob):
 
         exec_start = datetime.now(timezone.utc).timestamp()
         mlflow.log_metric('exec_start', exec_start)
-        logging.info(f'Starting K-Fold training job with run ID: {self.run_id} in experiment: {experiment_name}')
+        logging.info(
+            f'Starting K-Fold training job with run ID: {self.run_id} in experiment: {experiment_name}')
         children = self.get_children(experiment_name, tracking_uri)
         if not children:
             raise RuntimeError('No child training jobs found.')
