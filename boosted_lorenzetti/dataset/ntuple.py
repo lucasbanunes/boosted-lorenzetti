@@ -10,6 +10,7 @@ import duckdb
 import typer
 import mlflow
 from sklearn.model_selection import StratifiedKFold
+import logging
 
 
 from ..utils import open_directories, set_logger
@@ -509,6 +510,7 @@ class CreateDatabaseJob(MLFlowLoggedJob):
 
         data_df = []
         for i, label, ntuple_path in zip(range(len(self.labels)), self.labels, self.ntuple_paths):
+            logging.info(f'Processing ntuple file {i}: {ntuple_path}')
             df, description = process_ntuple_path(
                 ntuple_path, label, self.query, id_offset=len(data_df))
             data_df.append(df)
@@ -517,6 +519,7 @@ class CreateDatabaseJob(MLFlowLoggedJob):
         data_df = pd.concat(data_df, ignore_index=True)
 
         if self.n_folds > 0:
+            logging.info('Adding folds to the dataset')
             data_df['fold'] = NO_FOLD_VALUE
             cv = StratifiedKFold(self.n_folds, shuffle=True,
                                  random_state=self.seed)
@@ -525,6 +528,7 @@ class CreateDatabaseJob(MLFlowLoggedJob):
             data_df['fold'] = data_df['fold'].astype(pd.ArrowDtype(pa.uint8()))
 
         with duckdb.connect(str(self.output_path)) as con:
+            logging.info('Writing dataset to DuckDB')
             con.execute(
                 f"CREATE TABLE IF NOT EXISTS {self.table_name} AS SELECT * FROM data_df")
 
@@ -539,6 +543,7 @@ class CreateDatabaseJob(MLFlowLoggedJob):
             mlflow_dataset,
             context='versioning'
         )
+        logging.info('Finished')
 
 
 def create_dataset(ntuple_paths: List[str],

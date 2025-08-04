@@ -260,16 +260,6 @@ JOB_NAME_DESCRIPTION = (
     "Name of the training job."
 )
 
-JobNameType = Annotated[
-    str,
-    Field(
-        description=JOB_NAME_DESCRIPTION
-    ),
-    typer.Option(
-        "--job-name",
-        help=JOB_NAME_DESCRIPTION,
-    )
-]
 
 MAX_EPOCHS_DESCRIPTION = (
     "Maximum number of epochs for training."

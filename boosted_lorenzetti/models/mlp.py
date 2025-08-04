@@ -172,7 +172,7 @@ class TrainingJob(MLFlowLoggedJob):
     activation: types.ActivationType = 'relu'
     batch_size: types.BatchSizeType = 32
     run_id: types.MLFlowRunId = None
-    name: types.JobNameType = 'MLP Training Job'
+    name: str = 'MLP Training Job'
     accelerator: types.AcceleratorType = 'cpu'
     patience: types.PatienceType = 10
     checkpoints_dir: types.CheckpointsDirType = Path('checkpoints/')
@@ -331,7 +331,7 @@ def create_training(
     label_col: str | None = TrainingJob.model_fields['label_col'].default,
     activation: types.ActivationType = TrainingJob.model_fields['activation'].default,
     batch_size: types.BatchSizeType = TrainingJob.model_fields['batch_size'].default,
-    name: types.JobNameType = TrainingJob.model_fields['name'].default,
+    name: str = TrainingJob.model_fields['name'].default,
     accelerator: types.AcceleratorType = TrainingJob.model_fields['accelerator'].default,
     patience: types.PatienceType = TrainingJob.model_fields['patience'].default,
     checkpoints_dir: types.CheckpointsDirType = TrainingJob.model_fields[
@@ -413,7 +413,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
     inits: types.InitsType = 5
     folds: types.FoldType = 5
     run_id: types.MLFlowRunId = None
-    name: types.JobNameType = 'MLP K-Fold Training Job'
+    name: str = 'MLP K-Fold Training Job'
     accelerator: types.AcceleratorType = TrainingJob.model_fields['accelerator'].default
     patience: types.PatienceType = TrainingJob.model_fields['patience'].default
     checkpoints_dir: types.CheckpointsDirType = TrainingJob.model_fields[
@@ -449,6 +449,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                     fold_col=self.fold_col,
                     fold=fold
                 )
+                job_checkpoint_dir = self.checkpoints_dir / f'fold_{fold}_init_{init}'
                 training_job = TrainingJob(
                     db_path=self.db_path,
                     train_query=train_query,
@@ -460,7 +461,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                     name=self.name,
                     accelerator=self.accelerator,
                     patience=self.patience,
-                    checkpoints_dir=self.checkpoints_dir,
+                    checkpoints_dir=job_checkpoint_dir,
                     max_epochs=self.max_epochs
                 )
                 extra_tags['init'] = init
@@ -605,9 +606,13 @@ DatasetPathType = Annotated[
     help='Create a K-Fold training run for an MLP model.'
 )
 def create_kfold(
-    db_path: Path,
-    table_name: str,
     dims: types.DimsType,
+    db_path: Annotated[Path, typer.Option(
+        help='Path to the DuckDB database file.'
+    )],
+    table_name: Annotated[str, typer.Option(
+        help='Name of the DuckDB table containing the dataset.'
+    )],
     best_metric: types.BestMetricType,
     best_metric_mode: types.BestMetricModeType,
     rings_col: str = KFoldTrainingJob.model_fields['rings_col'].default,
@@ -617,7 +622,7 @@ def create_kfold(
     batch_size: types.BatchSizeType = KFoldTrainingJob.model_fields['batch_size'].default,
     inits: types.InitsType = KFoldTrainingJob.model_fields['inits'].default,
     folds: types.FoldType = KFoldTrainingJob.model_fields['folds'].default,
-    name: types.JobNameType = KFoldTrainingJob.model_fields['name'].default,
+    name: str = KFoldTrainingJob.model_fields['name'].default,
     accelerator: types.AcceleratorType = KFoldTrainingJob.model_fields['accelerator'].default,
     patience: types.PatienceType = KFoldTrainingJob.model_fields['patience'].default,
     checkpoints_dir: types.CheckpointsDirType = KFoldTrainingJob.model_fields['checkpoints_dir'].default,

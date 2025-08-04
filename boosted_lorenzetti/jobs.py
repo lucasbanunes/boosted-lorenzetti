@@ -33,7 +33,7 @@ class MLFlowLoggedJob(BaseModel, ABC):
 
     DUMP_EXCLUDE: ClassVar[List[str]] = []
 
-    name: types.JobNameType
+    name: str
     run_id: Annotated[
         str,
         Field(
