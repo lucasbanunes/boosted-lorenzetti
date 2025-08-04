@@ -611,13 +611,14 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         """
         Generates the test query for a specific fold.
         """
-        query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name};"
+        query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} >= 0;"
         feature_cols_str = ', '.join(
             [f'{self.rings_col}[{i+1}]' for i in range(N_RINGS)])
         return query_template.format(
             feature_cols_str=feature_cols_str,
             label_col=self.label_col,
-            table_name=self.table_name
+            table_name=self.table_name,
+            fold_col=self.fold_col
         )
 
     @contextmanager
@@ -630,6 +631,9 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             logging.info(
                 f'Creating K-Fold training job with run ID: {run.info.run_id}')
             for init, fold in product(range(self.inits), range(self.folds)):
+                job_checkpoint_dir = self.checkpoints_dir / f'fold_{fold}_init_{init}'
+                job_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
                 training_job = TrainingJob(
                     db_path=self.db_path,
                     train_query=self.get_train_query(fold),
