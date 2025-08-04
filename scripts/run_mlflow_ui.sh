@@ -13,7 +13,7 @@
 img=$1
 mlruns_path=$2
 port=$3
-command="conda run -n dev mlflow ui -h 0.0.0.0 -p ${port} --backend-store-uri file://${mlruns_path}"
+command="conda run -n dev --live-stream mlflow ui -h 0.0.0.0 -p ${port} --backend-store-uri file://${mlruns_path}"
 # "cd /mnt/cern_data/${USER}/lorenzetti && conda run -n dev mlflow ui -h 0.0.0.0 -p ${port}"
 
 echo "Running command ${command} on ${img}"

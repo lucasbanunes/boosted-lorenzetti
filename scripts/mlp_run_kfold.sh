@@ -13,7 +13,12 @@
 kfold_run_id=$1
 tracking_uri=$2
 img=$3
-command="conda run -n dev python cli.py mlp run-kfold ${kfold_run_id} --tracking-uri file://${tracking_uri} --experiment-name boosted-lorenzetti --force error"
+command="cd /home/${USER}/workspaces/lorenzetti/boosted-lorenzetti &&"
+command="${command} conda run -n dev --live-stream"
+command="${command} python cli.py mlp run-kfold"
+command="${command} ${kfold_run_id}"
+command="${command} --tracking-uri file://${tracking_uri}"
+command="${command} --experiment-name boosted-lorenzetti"
 # "cd /mnt/cern_data/${USER}/lorenzetti && conda run -n dev mlflow ui -h 0.0.0.0 -p ${port}"
 
 echo "Running command ${command} on ${img}"
