@@ -149,20 +149,140 @@ class DuckDBDataset(L.LightningDataModule):
             predict_dataset = self.__get_mlflow_dataset(self.predict_query)
             mlflow.log_input(predict_dataset, context='prediction')
 
-    def train_dataloader(self):
+    def train_dataloader(self) -> torch.utils.data.DataLoader:
+        """
+        Returns the train DataLoader.
+
+        Returns
+        -------
+        torch.utils.data.DataLoader
+            The train DataLoader.
+
+        Raises
+        ------
+        ValueError
+            If the train query is not set.
+        """
         return self.get_dataloader_from_query(self.train_query)
 
-    def val_dataloader(self):
+    def train_df(self) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        """
+        Returns the training DataFrames.
+
+        Returns
+        -------
+        Tuple[pl.DataFrame, pl.DataFrame]
+            A tuple containing the feature DataFrame and the label DataFrame for training.
+
+        Raises
+        ------
+        ValueError
+            If the train query is not set.
+        """
+        if self.train_query is None:
+            raise ValueError("Train query is not set.")
+        X, y = self.get_df_from_query(self.train_query)
+        return X, y
+
+    def val_dataloader(self) -> torch.utils.data.DataLoader:
+        """
+        Returns the validation DataLoader.
+
+        Returns
+        -------
+        torch.utils.data.DataLoader
+            The validation DataLoader.
+
+        Raises
+        ------
+        ValueError
+            If the validation query is not set.
+        """
         if self.val_query is None:
             raise ValueError("Validation query is not set.")
         return self.get_dataloader_from_query(self.val_query)
 
-    def test_dataloader(self):
+    def val_df(self) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        """
+        Returns the validation DataFrames.
+
+        Returns
+        -------
+        Tuple[pl.DataFrame, pl.DataFrame]
+            A tuple containing the feature DataFrame and the label DataFrame for validation.
+        """
+        if self.val_query is None:
+            raise ValueError("Validation query is not set.")
+        return self.get_df_from_query(self.val_query)
+
+    def test_dataloader(self) -> torch.utils.data.DataLoader:
+        """
+        Returns the test DataLoader.
+
+        Returns
+        -------
+        torch.utils.data.DataLoader
+            The test DataLoader.
+
+        Raises
+        ------
+        ValueError
+            If the test query is not set.
+        """
         if self.test_query is None:
             raise ValueError("Test query is not set.")
         return self.get_dataloader_from_query(self.test_query)
 
-    def predict_dataloader(self):
+    def test_df(self) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        """
+        Returns the test DataFrames.
+
+        Returns
+        -------
+        Tuple[pl.DataFrame, pl.DataFrame]
+            A tuple containing the feature DataFrame and the label DataFrame for testing.
+
+        Raises
+        ------
+        ValueError
+            If the test query is not set.
+        """
+        if self.test_query is None:
+            raise ValueError("Test query is not set.")
+        return self.get_df_from_query(self.test_query)
+
+    def predict_dataloader(self) -> torch.utils.data.DataLoader:
+        """
+        Returns the prediction DataLoader.
+
+        Returns
+        -------
+        torch.utils.data.DataLoader
+            The prediction DataLoader.
+
+        Raises
+        ------
+        ValueError
+            If the prediction query is not set.
+        """
         if self.predict_query is None:
             raise ValueError("Prediction query is not set.")
         return self.get_dataloader_from_query(self.predict_query)
+
+    def predict_df(self) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        """
+        Returns the prediction DataFrames.
+
+        Returns
+        -------
+        Tuple[pl.DataFrame, pl.DataFrame]
+            A tuple containing the feature DataFrame and the label DataFrame for prediction.
+
+        Raises
+        ------
+        ValueError
+            If the prediction query is not set.
+        """
+        if self.predict_query is None:
+            raise ValueError("Prediction query is not set.")
+        return self.get_df_from_query(self.predict_query)

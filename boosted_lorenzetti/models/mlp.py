@@ -1,6 +1,8 @@
 from contextlib import contextmanager
 from itertools import product
+from tempfile import TemporaryDirectory
 import mlflow.entities
+import numpy as np
 import torch
 import torch.nn as nn
 import lightning as L
@@ -14,7 +16,8 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from torchmetrics import MetricCollection
 from torchmetrics.classification import (
     BinaryAccuracy,
-    BinaryROC
+    BinaryROC,
+    BinaryConfusionMatrix
 )
 from mlflow.models import infer_signature
 import logging
@@ -22,6 +25,7 @@ import shutil
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, timezone
+import polars as pl
 
 from ..dataset.duckdb import DuckDBDataset
 from ..metrics import sp_index
@@ -160,6 +164,114 @@ class MLP(L.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
 
+    def evaluate_on_data(self,
+                         X: pl.DataFrame,
+                         y: pl.DataFrame,
+                         prefix: str = '',
+                         mlflow_log: bool = False
+                         ) -> Dict[str, Any]:
+        """
+        Evaluates the model on the provided data.
+        """
+
+        if not prefix.endswith('_') and prefix != '':
+            prefix += '_'
+
+        X_tensor = X.to_torch()
+        y_tensor = y.to_torch()
+        thresholds = torch.linspace(0, 1, 300)
+        tp = torch.empty((len(thresholds),), dtype=torch.int32)
+        fp = torch.empty((len(thresholds),), dtype=torch.int32)
+        tn = torch.empty((len(thresholds),), dtype=torch.int32)
+        fn = torch.empty((len(thresholds),), dtype=torch.int32)
+
+        with torch.no_grad():
+            self.eval()
+            logits = self(X_tensor)
+
+        for i, thresh in enumerate(thresholds):
+            cm = BinaryConfusionMatrix(threshold=float(thresh))(logits, y_tensor)
+            tp[i] = cm[1, 1]
+            fp[i] = cm[0, 1]
+            tn[i] = cm[0, 0]
+            fn[i] = cm[1, 0]
+
+        eval_df = pd.DataFrame({
+            'thresholds': thresholds.numpy(),
+            'tp': tp.numpy(),
+            'fp': fp.numpy(),
+            'tn': tn.numpy(),
+            'fn': fn.numpy()
+        })
+        eval_df['tpr'] = eval_df['tp'] / (eval_df['tp'] + eval_df['fn'])
+        eval_df['fpr'] = eval_df['fp'] / (eval_df['fp'] + eval_df['tn'])
+        eval_df['acc'] = (eval_df['tp'] + eval_df['tn']) / len(y_tensor)
+        eval_df['sp'] = sp_index(
+            eval_df['tpr'].values,
+            eval_df['fpr'].values,
+            backend='numpy')
+        sp_max_idx = eval_df['sp'].argmax()
+
+        metrics = {
+            col_name: eval_df[col_name].tolist()
+            for col_name in eval_df.columns
+        }
+
+        with TemporaryDirectory() as tmp_dir:
+            df_path = Path(tmp_dir) / f'{prefix}eval_df.csv'
+            eval_df.to_csv(df_path, index=False)
+            mlflow.log_artifact(str(df_path))
+
+        if mlflow_log:
+            mlflow.log_metric(f'{prefix}max_sp', eval_df['sp'].iloc[sp_max_idx])
+            mlflow.log_metric(f'{prefix}max_sp_threshold', eval_df['thresholds'].iloc[sp_max_idx])
+            mlflow.log_metric(f'{prefix}max_sp_fpr', eval_df['fpr'].iloc[sp_max_idx])
+            mlflow.log_metric(f'{prefix}max_sp_tpr', eval_df['tpr'].iloc[sp_max_idx])
+            mlflow.log_metric(f'{prefix}max_sp_acc', eval_df['acc'].iloc[sp_max_idx])
+            roc_auc = np.trapezoid(eval_df['tpr'].values, eval_df['fpr'].values)
+            mlflow.log_metric(f'{prefix}roc_auc', roc_auc)
+
+        metrics['max_sp'] = eval_df['sp'].iloc[sp_max_idx]
+        metrics['max_sp_fpr'] = eval_df['fpr'].iloc[sp_max_idx]
+        metrics['max_sp_tpr'] = eval_df['tpr'].iloc[sp_max_idx]
+        metrics['max_sp_acc'] = eval_df['acc'].iloc[sp_max_idx]
+        metrics['max_sp_threshold'] = eval_df['thresholds'].iloc[sp_max_idx]
+        metrics['roc_auc'] = np.trapezoid(
+            eval_df['tpr'].values,
+            eval_df['fpr'].values
+        )
+
+        if mlflow_log:
+            roc_curve_artifact = f'{prefix}roc_curve.html'
+            fig = px.line(
+                eval_df.sort_values('fpr'),
+                x='fpr',
+                y='tpr',
+            )
+            fig.update_layout(
+                title=f'ROC Curve (AUC {metrics["roc_auc"]:.2f})',
+                xaxis_title='False Positive Rate',
+                yaxis_title='True Positive Rate'
+            )
+            mlflow.log_figure(fig, roc_curve_artifact)
+
+        if mlflow_log:
+            tpr_fpr_artifact = f'{prefix}tpr_fpr.html'
+            fig = px.line(
+                eval_df.sort_values('thresholds'),
+                x='thresholds',
+                y=['tpr', 'fpr'],
+            )
+            fig.update_layout(
+                title='TPR and FPR vs Thresholds',
+                xaxis_title='Thresholds',
+                yaxis_title='Rate',
+                legend_title='Rate Type'
+            )
+            mlflow.log_figure(fig, tpr_fpr_artifact)
+
+        return metrics
+
 
 class TrainingJob(MLFlowLoggedJob):
     db_path: Path
@@ -268,7 +380,9 @@ class TrainingJob(MLFlowLoggedJob):
         best_model = MLP.load_from_checkpoint(
             checkpoint.best_model_path
         )
-        mlflow.log_artifact(checkpoint.best_model_path, artifact_path='model.ckpt')
+        log_path = tmp_dir / 'model.ckpt'
+        shutil.copy(checkpoint.best_model_path, log_path)
+        mlflow.log_artifact(log_path)
         mlflow.pytorch.log_model(
             pytorch_model=best_model,
             name="ml_model",
@@ -276,9 +390,52 @@ class TrainingJob(MLFlowLoggedJob):
         )
         onnx_path = tmp_dir / 'model.onnx'
         best_model.to_onnx(onnx_path, export_params=True)
-        mlflow.log_artifact(str(onnx_path), artifact_path='onnx_model')
+        mlflow.log_artifact(str(onnx_path))
         logging.info('Training completed and model logged to MLFlow.')
         shutil.rmtree(str(self.checkpoints_dir))
+
+        logging.info('Evaluating best model on train dataset.')
+        train_X, train_y = datamodule.train_df()
+        model.evaluate_on_data(
+            X=train_X,
+            y=train_y,
+            prefix='train',
+            mlflow_log=True
+        )
+        del train_X, train_y  # Free memory
+
+        if self.val_query:
+            logging.info('Evaluating best model on validation dataset.')
+            val_X, val_y = datamodule.val_df()
+            model.evaluate_on_data(
+                X=val_X,
+                y=val_y,
+                prefix='val',
+                mlflow_log=True
+            )
+            del val_X, val_y  # Free memory
+
+        if self.test_query:
+            logging.info('Evaluating best model on test dataset.')
+            test_X, test_y = datamodule.test_df()
+            model.evaluate_on_data(
+                X=test_X,
+                y=test_y,
+                prefix='test',
+                mlflow_log=True
+            )
+            del test_X, test_y  # Free memory
+
+        if self.predict_query:
+            logging.info('Evaluating best model on prediction dataset.')
+            predict_X, predict_y = datamodule.predict_df()
+            model.evaluate_on_data(
+                X=predict_X,
+                y=predict_y,
+                prefix='predict',
+                mlflow_log=True
+            )
+            del predict_X, predict_y  # Free memory
 
         end_start = datetime.now(timezone.utc).timestamp()
         mlflow.log_metric('exec_end', end_start)
@@ -420,39 +577,64 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         'checkpoints_dir'].default
     max_epochs: types.MaxEpochsType = TrainingJob.model_fields['max_epochs'].default
 
+    def get_val_query(self, val_fold: int) -> str:
+        """
+        Generates the validation query for a specific fold.
+        """
+        query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} = {fold} AND {fold_col} >= 0;"
+        feature_cols_str = ', '.join(
+            [f'{self.rings_col}[{i+1}]' for i in range(N_RINGS)])
+        return query_template.format(
+            feature_cols_str=feature_cols_str,
+            label_col=self.label_col,
+            table_name=self.table_name,
+            fold_col=self.fold_col,
+            fold=val_fold
+        )
+
+    def get_train_query(self, val_fold: int) -> str:
+        """
+        Generates the training query for a specific fold.
+        """
+        query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} != {fold};"
+        feature_cols_str = ', '.join(
+            [f'{self.rings_col}[{i+1}]' for i in range(N_RINGS)])
+        return query_template.format(
+            feature_cols_str=feature_cols_str,
+            label_col=self.label_col,
+            table_name=self.table_name,
+            fold_col=self.fold_col,
+            fold=val_fold
+        )
+
+    def get_test_query(self) -> str:
+        """
+        Generates the test query for a specific fold.
+        """
+        query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name};"
+        feature_cols_str = ', '.join(
+            [f'{self.rings_col}[{i+1}]' for i in range(N_RINGS)])
+        return query_template.format(
+            feature_cols_str=feature_cols_str,
+            label_col=self.label_col,
+            table_name=self.table_name
+        )
+
     @contextmanager
     def to_mlflow_context(self,
                           nested: bool = False,
                           tags: List[str] = [],
                           extra_tags: Dict[str, Any] = {}):
         extra_tags['model'] = 'MLP'
-        val_query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} = {fold} AND {fold_col} >= 0;"
-        train_query_template = val_query_template.replace(
-            "{fold_col} = {fold}", "{fold_col} != {fold}")
-        feature_cols_str = ', '.join(
-            [f'{self.rings_col}[{i+1}]' for i in range(N_RINGS)])
         with super().to_mlflow_context(nested=nested, tags=tags, extra_tags=extra_tags) as run:
             logging.info(
                 f'Creating K-Fold training job with run ID: {run.info.run_id}')
             for init, fold in product(range(self.inits), range(self.folds)):
-                train_query = train_query_template.format(
-                    feature_cols_str=feature_cols_str,
-                    label_col=self.label_col,
-                    table_name=self.table_name,
-                    fold_col=self.fold_col,
-                    fold=fold
-                )
-                val_query = val_query_template.format(
-                    feature_cols_str=feature_cols_str,
-                    label_col=self.label_col,
-                    table_name=self.table_name,
-                    fold_col=self.fold_col,
-                    fold=fold
-                )
                 training_job = TrainingJob(
                     db_path=self.db_path,
-                    train_query=train_query,
-                    val_query=val_query,
+                    train_query=self.get_train_query(fold),
+                    val_query=self.get_val_query(fold),
+                    test_query=self.get_test_query(),
                     dims=self.dims,
                     label_col=self.label_col,
                     activation=self.activation,
@@ -504,6 +686,68 @@ class KFoldTrainingJob(MLFlowLoggedJob):
 
         return children_jobs
 
+    def log_model(self, run_id: str) -> MLP:
+        """
+        Logs the model from the specified run ID to MLFlow.
+        """
+        with self.tmp_artifact_download(run_id, 'model.ckpt') as model_ckpt_path:
+            mlflow.log_artifact(str(model_ckpt_path))
+            model = MLP.load_from_checkpoint(model_ckpt_path)
+            model.eval()
+            with torch.no_grad():
+                example_output_array: torch.Tensor = model(
+                    model.example_input_array)
+            mlflow.pytorch.log_model(
+                pytorch_model=model,
+                name="model",
+                signature=infer_signature(
+                    model_input=model.example_input_array.numpy(),
+                    model_output=example_output_array.numpy()
+                )
+            )
+
+        return model
+
+    def evaluate_best_model(self,
+                            model: MLP,
+                            val_fold: int):
+
+        dataset = MLPDataset(
+            db_path=self.db_path,
+            train_query=self.get_train_query(val_fold),
+            val_query=self.get_val_query(val_fold),
+            test_query=self.get_test_query(),
+            label_cols=self.label_col,
+            batch_size=self.batch_size
+        )
+
+        logging.info('Evaluating best model on train dataset.')
+        train_X, train_y = dataset.train_df()
+        model.evaluate_on_data(
+            X=train_X,
+            y=train_y,
+            prefix='train',
+            mlflow_log=True
+        )
+
+        logging.info('Evaluating best model on validation dataset.')
+        val_X, val_y = dataset.val_df()
+        model.evaluate_on_data(
+            X=val_X,
+            y=val_y,
+            prefix='val',
+            mlflow_log=True
+        )
+
+        logging.info('Evaluating best model on test dataset.')
+        test_X, test_y = dataset.test_df()
+        model.evaluate_on_data(
+            X=test_X,
+            y=test_y,
+            prefix='test',
+            mlflow_log=True
+        )
+
     def exec(self, tmp_dir: Path,
              experiment_name: str,
              tracking_uri: str | None,
@@ -529,12 +773,18 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                               nested=True,
                               force=force)
             children_jobs.append(child_job)
-
         job_metrics_df_artifact = 'job_metrics.csv'
-        job_metrics_df, metric_names = TrainingJob.get_metrics_df(
-            children_jobs)
-        job_metrics_df_path = tmp_dir / job_metrics_df_artifact
-        job_metrics_df.to_csv(job_metrics_df_path, index=False)
+        if self.artifact_exists(job_metrics_df_artifact):
+            job_metrics_df = self.load_csv_artifact(job_metrics_df_artifact).sort_values('fold')
+            logging.info(
+                'Job metrics already exist, skipping metrics calculation.')
+        else:
+            job_metrics_df, metric_names = TrainingJob.get_metrics_df(
+                children_jobs)
+            job_metrics_df.sort_values('fold', inplace=True)
+            job_metrics_df_path = tmp_dir / job_metrics_df_artifact
+            job_metrics_df.to_csv(job_metrics_df_path, index=False)
+            mlflow.log_artifact(str(job_metrics_df_path))
 
         if self.best_metric_mode == 'min':
             best_idx = job_metrics_df[self.best_metric].idxmin()
@@ -543,12 +793,14 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         else:
             raise ValueError(
                 f'Unsupported best metric mode: {self.best_metric_mode}')
+
         best_metrics = job_metrics_df.loc[best_idx]
         mlflow.log_param("best_job_run_id", best_metrics['run_id'])
         mlflow.log_param("best_job_fold", best_metrics['fold'])
         mlflow.log_param("best_job_init", best_metrics['init'])
 
-        mlflow.log_artifact(str(job_metrics_df_path))
+        logging.info(
+            f'Best job found: run ID - {best_metrics["run_id"]} - fold - {best_metrics["fold"]} - init - {best_metrics["init"]}')
 
         aggregation_dict = dict()
         for metric in metric_names:
@@ -567,9 +819,17 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             .reset_index() \
             .melt(id_vars='fold',
                   var_name='metric')
-        aggregated_metrics_path = tmp_dir / 'aggregated_metrics.csv'
-        aggregated_metrics.to_csv(aggregated_metrics_path, index=False)
-        mlflow.log_artifact(str(aggregated_metrics_path))
+
+        aggrgated_metrics_artifact = 'aggregated_metrics.csv'
+        if self.artifact_exists(aggrgated_metrics_artifact):
+            aggregated_metrics = self.load_csv_artifact(
+                aggrgated_metrics_artifact)
+            logging.info(
+                'Aggregated metrics already exist, skipping aggregation.')
+        else:
+            aggregated_metrics_path = tmp_dir / aggrgated_metrics_artifact
+            aggregated_metrics.to_csv(aggregated_metrics_path, index=False)
+            mlflow.log_artifact(str(aggregated_metrics_path))
 
         box_plot_artifact = f'{self.best_metric}_box_plot.html'
         if not self.artifact_exists(box_plot_artifact):
@@ -586,6 +846,15 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                           annotation_text='Best',
                           annotation_position="top left")
             mlflow.log_figure(fig, box_plot_artifact)
+
+        if not self.artifact_exists('model.onnx'):
+            self.copy_artifact(best_metrics['run_id'],
+                               'model.onnx',
+                               dst='model.onnx')
+
+        if not self.artifact_exists('model.ckpt'):
+            model = self.log_model(best_metrics['run_id'])
+            self.evaluate_best_model(model, val_fold=best_metrics['fold'])
 
         logging.info('K-Fold training jobs completed and logged to MLFlow.')
         exec_end = datetime.now(timezone.utc).timestamp()
@@ -620,7 +889,8 @@ def create_kfold(
     name: types.JobNameType = KFoldTrainingJob.model_fields['name'].default,
     accelerator: types.AcceleratorType = KFoldTrainingJob.model_fields['accelerator'].default,
     patience: types.PatienceType = KFoldTrainingJob.model_fields['patience'].default,
-    checkpoints_dir: types.CheckpointsDirType = KFoldTrainingJob.model_fields['checkpoints_dir'].default,
+    checkpoints_dir: types.CheckpointsDirType = KFoldTrainingJob.model_fields[
+        'checkpoints_dir'].default,
     max_epochs: types.MaxEpochsType = KFoldTrainingJob.model_fields['max_epochs'].default,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',

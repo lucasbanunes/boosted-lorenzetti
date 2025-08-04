@@ -28,7 +28,7 @@ def ringer_norm1(data: np.ndarray) -> np.ndarray:
 
 def sp_index(tpr: Number,
              fpr: Number,
-             backend: Literal['numpy', 'torch']
+             backend: Literal['numpy', 'torch', 'object'] = 'numpy'
              ) -> Number:
     """
     Calculate the Specificity-Positive index (SP) given true positive rate (TPR)
@@ -40,8 +40,10 @@ def sp_index(tpr: Number,
         True Positive Rate (TPR)
     fpr : Number
         False Positive Rate (FPR)
-    backend : Literal['numpy', 'torch']
-        The backend to use for calculations, either 'numpy' or 'torch'.
+    backend : Literal['numpy', 'torch', 'object'], optional
+        Specifies the backend to use for calculations. Defaults to 'numpy'.
+        When object, it uses the default backend of the library by calling
+        the object's methods.
 
     Returns
     -------
@@ -59,6 +61,9 @@ def sp_index(tpr: Number,
                 torch.sqrt(tpr*(1-fpr)) *
                 ((tpr + (1-fpr))/2)
             )
+        case 'object':
+            return ((tpr*(1-fpr)).sqrt() *
+                    ((tpr + (1-fpr))/2)).sqrt()
         case _:
             raise ValueError("Unsupported backend. Use 'numpy' or 'torch'.")
 
