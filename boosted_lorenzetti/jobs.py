@@ -1,14 +1,16 @@
 import json
 import logging
 from tempfile import TemporaryDirectory
+import mlflow.artifacts
 from pydantic import BaseModel, Field, PrivateAttr, computed_field
-from typing import Annotated, Any, Dict, Literal, List, ClassVar
+from typing import Annotated, Any, Dict, Generator, Literal, List, ClassVar
 import mlflow
 from abc import ABC, abstractmethod
 from pathlib import Path
 from datetime import datetime
 from contextlib import contextmanager
 import numpy as np
+import pandas as pd
 
 from . import types
 from .utils import unflatten_dict
@@ -402,3 +404,74 @@ class MLFlowLoggedJob(BaseModel, ABC):
             if artifact.path == artifact_path:
                 return True
         return False
+
+    @contextmanager
+    def tmp_artifact_download(self,
+                              run_id: str,
+                              artifact_path: str) -> Generator[Path, None, None]:
+        """
+        Download an artifact from a run to a temporary directory.
+
+        Parameters
+        ----------
+        run_id : str
+            The MLFlow run ID from which to download the artifact.
+        artifact_path : str
+            The path to the artifact to download.
+
+        Yields
+        ------
+        Generator[Path, None, None]
+            The path to the downloaded artifact.
+        """
+        with TemporaryDirectory() as tmp_dir:
+            mlflow.artifacts.download_artifacts(
+                run_id=run_id,
+                artifact_path=artifact_path,
+                dst_path=tmp_dir
+            )
+            yield Path(tmp_dir) / artifact_path
+
+    def copy_artifact(self,
+                      run_id: str,
+                      artifact_path: str,
+                      dst: str):
+        """
+        Copy an artifact from another run to the current run.
+
+        Parameters
+        ----------
+        run_id : str
+            The MLFlow run ID from which to copy the artifact.
+        artifact_path : str
+            The path to the artifact in the source run.
+        dst : str
+            The destination path where the artifact should be copied in the current run.
+        """
+        with self.tmp_artifact_download(run_id, artifact_path) as tmp_path:
+            mlflow.log_artifact(str(tmp_path), dst)
+
+    def load_csv_artifact(self, artifact_path: str,
+                          run_id: str | None = None,
+                          **kwargs) -> pd.DataFrame:
+        """
+        Load a CSV artifact from the MLFlow run.
+
+        Parameters
+        ----------
+        artifact_path : str
+            The path to the CSV artifact.
+        run_id : str, optional
+            The MLFlow run ID from which to load the artifact. If None, uses the current run ID.
+        **kwargs : Any
+            Additional keyword arguments to pass to `pd.read_csv`.
+
+        Returns
+        -------
+        pd.DataFrame
+            The loaded CSV data as a pandas DataFrame.
+        """
+        if run_id is None:
+            run_id = self.run_id
+        with self.tmp_artifact_download(run_id, artifact_path) as tmp_path:
+            return pd.read_csv(tmp_path, **kwargs)
