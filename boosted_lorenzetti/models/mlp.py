@@ -222,26 +222,21 @@ class MLP(L.LightningModule):
             eval_df.to_csv(df_path, index=False)
             mlflow.log_artifact(str(df_path))
 
+        metrics['max_sp'] = eval_df['sp'].iloc[sp_max_idx]
+        metrics['max_sp_fpr'] = eval_df['fpr'].iloc[sp_max_idx]
+        metrics['max_sp_tpr'] = eval_df['tpr'].iloc[sp_max_idx]
+        metrics['max_sp_acc'] = eval_df['acc'].iloc[sp_max_idx]
+        metrics['max_sp_threshold'] = eval_df['thresholds'].iloc[sp_max_idx]
+        roc_auc = np.trapezoid(eval_df['tpr'].values, eval_df['fpr'].values)
+        metrics['roc_auc'] = roc_auc
+
         if mlflow_log:
             mlflow.log_metric(f'{prefix}max_sp', eval_df['sp'].iloc[sp_max_idx])
             mlflow.log_metric(f'{prefix}max_sp_threshold', eval_df['thresholds'].iloc[sp_max_idx])
             mlflow.log_metric(f'{prefix}max_sp_fpr', eval_df['fpr'].iloc[sp_max_idx])
             mlflow.log_metric(f'{prefix}max_sp_tpr', eval_df['tpr'].iloc[sp_max_idx])
             mlflow.log_metric(f'{prefix}max_sp_acc', eval_df['acc'].iloc[sp_max_idx])
-            roc_auc = np.trapezoid(eval_df['tpr'].values, eval_df['fpr'].values)
             mlflow.log_metric(f'{prefix}roc_auc', roc_auc)
-
-        metrics['max_sp'] = eval_df['sp'].iloc[sp_max_idx]
-        metrics['max_sp_fpr'] = eval_df['fpr'].iloc[sp_max_idx]
-        metrics['max_sp_tpr'] = eval_df['tpr'].iloc[sp_max_idx]
-        metrics['max_sp_acc'] = eval_df['acc'].iloc[sp_max_idx]
-        metrics['max_sp_threshold'] = eval_df['thresholds'].iloc[sp_max_idx]
-        metrics['roc_auc'] = np.trapezoid(
-            eval_df['tpr'].values,
-            eval_df['fpr'].values
-        )
-
-        if mlflow_log:
             roc_curve_artifact = f'{prefix}roc_curve.html'
             fig = px.line(
                 eval_df.sort_values('fpr'),
@@ -255,7 +250,6 @@ class MLP(L.LightningModule):
             )
             mlflow.log_figure(fig, roc_curve_artifact)
 
-        if mlflow_log:
             tpr_fpr_artifact = f'{prefix}tpr_fpr.html'
             fig = px.line(
                 eval_df.sort_values('thresholds'),
