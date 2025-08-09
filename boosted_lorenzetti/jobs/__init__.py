@@ -1,3 +1,5 @@
+# Here so I don have alter imports
+
 import json
 import logging
 from tempfile import TemporaryDirectory
@@ -11,8 +13,8 @@ from contextlib import contextmanager
 import numpy as np
 import pandas as pd
 
-from .mlflow import tmp_artifact_download
-from .utils import unflatten_dict
+from ..mlflow import tmp_artifact_download
+from ..utils import unflatten_dict
 
 
 @contextmanager
