@@ -13,8 +13,8 @@ from contextlib import contextmanager
 import numpy as np
 import pandas as pd
 
-from ..mlflow import tmp_artifact_download
-from ..utils import unflatten_dict
+from .mlflow import tmp_artifact_download
+from .utils import unflatten_dict
 
 
 @contextmanager
@@ -31,7 +31,8 @@ def log_start_end(start_name: str = 'start',
 class MLFlowLoggedJob(BaseModel, ABC):
 
     BASE_DUMP_EXCLUDE: ClassVar[List[str]] = [
-        'run_id', '_mlflow_run', 'run', 'tags', 'name', 'executed', 'metrics'
+        'run_id', '_mlflow_run', 'run', 'tags', 'name', 'executed', 'metrics',
+        'description'
     ]
 
     DUMP_EXCLUDE: ClassVar[List[str]] = []
@@ -49,6 +50,12 @@ class MLFlowLoggedJob(BaseModel, ABC):
             description="Indicates whether the job has been executed successfully."
         )
     ] = False
+    description: Annotated[
+        str | None,
+        Field(
+            description="A markdown description of the job."
+        )
+    ] = None
     _mlflow_run: Annotated[
         Any,
         PrivateAttr()
@@ -270,7 +277,7 @@ class MLFlowLoggedJob(BaseModel, ABC):
             extra_tags[tag] = getattr(self, tag)
 
         with mlflow.start_run(run_name=self.name, nested=nested,
-                              tags=extra_tags) as run:
+                              tags=extra_tags, description=self.description) as run:
             self.log_params(params)
             self.run_id = run.info.run_id
             yield run

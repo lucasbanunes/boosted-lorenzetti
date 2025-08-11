@@ -1,8 +1,6 @@
 from contextlib import contextmanager
 from itertools import product
-from tempfile import TemporaryDirectory
 import mlflow.entities
-import numpy as np
 import torch
 import torch.nn as nn
 import lightning as L
@@ -16,8 +14,7 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from torchmetrics import MetricCollection
 from torchmetrics.classification import (
     BinaryAccuracy,
-    BinaryROC,
-    BinaryConfusionMatrix
+    BinaryROC
 )
 from mlflow.models import infer_signature
 import logging
@@ -33,6 +30,7 @@ from ..log import set_logger
 from .. import types
 from ..constants import N_RINGS
 from ..jobs import MLFlowLoggedJob
+from ..binary_classification import evaluate_on_data
 
 
 class MLPDataset(DuckDBDataset):
@@ -173,98 +171,25 @@ class MLP(L.LightningModule):
         """
         Evaluates the model on the provided data.
         """
-
         if not prefix.endswith('_') and prefix != '':
             prefix += '_'
 
         X_tensor = X.to_torch()
         y_tensor = y.to_torch()
         thresholds = torch.linspace(0, 1, 300)
-        tp = torch.empty((len(thresholds),), dtype=torch.int32)
-        fp = torch.empty((len(thresholds),), dtype=torch.int32)
-        tn = torch.empty((len(thresholds),), dtype=torch.int32)
-        fn = torch.empty((len(thresholds),), dtype=torch.int32)
 
         with torch.no_grad():
             self.eval()
             logits = self(X_tensor)
+        self.train()
 
-        for i, thresh in enumerate(thresholds):
-            cm = BinaryConfusionMatrix(threshold=float(thresh))(logits, y_tensor)
-            tp[i] = cm[1, 1]
-            fp[i] = cm[0, 1]
-            tn[i] = cm[0, 0]
-            fn[i] = cm[1, 0]
-
-        eval_df = pd.DataFrame({
-            'thresholds': thresholds.numpy(),
-            'tp': tp.numpy(),
-            'fp': fp.numpy(),
-            'tn': tn.numpy(),
-            'fn': fn.numpy()
-        })
-        eval_df['tpr'] = eval_df['tp'] / (eval_df['tp'] + eval_df['fn'])
-        eval_df['fpr'] = eval_df['fp'] / (eval_df['fp'] + eval_df['tn'])
-        eval_df['acc'] = (eval_df['tp'] + eval_df['tn']) / len(y_tensor)
-        eval_df['sp'] = sp_index(
-            eval_df['tpr'].values,
-            eval_df['fpr'].values,
-            backend='numpy')
-        sp_max_idx = eval_df['sp'].argmax()
-
-        metrics = {
-            col_name: eval_df[col_name].tolist()
-            for col_name in eval_df.columns
-        }
-
-        with TemporaryDirectory() as tmp_dir:
-            df_path = Path(tmp_dir) / f'{prefix}eval_df.csv'
-            eval_df.to_csv(df_path, index=False)
-            mlflow.log_artifact(str(df_path))
-
-        metrics['max_sp'] = eval_df['sp'].iloc[sp_max_idx]
-        metrics['max_sp_fpr'] = eval_df['fpr'].iloc[sp_max_idx]
-        metrics['max_sp_tpr'] = eval_df['tpr'].iloc[sp_max_idx]
-        metrics['max_sp_acc'] = eval_df['acc'].iloc[sp_max_idx]
-        metrics['max_sp_threshold'] = eval_df['thresholds'].iloc[sp_max_idx]
-        roc_auc = np.trapezoid(eval_df['tpr'].values, eval_df['fpr'].values)
-        metrics['roc_auc'] = roc_auc
-
-        if mlflow_log:
-            mlflow.log_metric(f'{prefix}max_sp', eval_df['sp'].iloc[sp_max_idx])
-            mlflow.log_metric(f'{prefix}max_sp_threshold', eval_df['thresholds'].iloc[sp_max_idx])
-            mlflow.log_metric(f'{prefix}max_sp_fpr', eval_df['fpr'].iloc[sp_max_idx])
-            mlflow.log_metric(f'{prefix}max_sp_tpr', eval_df['tpr'].iloc[sp_max_idx])
-            mlflow.log_metric(f'{prefix}max_sp_acc', eval_df['acc'].iloc[sp_max_idx])
-            mlflow.log_metric(f'{prefix}roc_auc', roc_auc)
-            roc_curve_artifact = f'{prefix}roc_curve.html'
-            fig = px.line(
-                eval_df.sort_values('fpr'),
-                x='fpr',
-                y='tpr',
-            )
-            fig.update_layout(
-                title=f'ROC Curve (AUC {metrics["roc_auc"]:.2f})',
-                xaxis_title='False Positive Rate',
-                yaxis_title='True Positive Rate'
-            )
-            mlflow.log_figure(fig, roc_curve_artifact)
-
-            tpr_fpr_artifact = f'{prefix}tpr_fpr.html'
-            fig = px.line(
-                eval_df.sort_values('thresholds'),
-                x='thresholds',
-                y=['tpr', 'fpr'],
-            )
-            fig.update_layout(
-                title='TPR and FPR vs Thresholds',
-                xaxis_title='Thresholds',
-                yaxis_title='Rate',
-                legend_title='Rate Type'
-            )
-            mlflow.log_figure(fig, tpr_fpr_artifact)
-
-        return metrics
+        return evaluate_on_data(
+            y_pred=logits,
+            y_true=y_tensor,
+            thresholds=thresholds,
+            prefix=prefix,
+            mlflow_log=mlflow_log
+        )
 
 
 class TrainingJob(MLFlowLoggedJob):
