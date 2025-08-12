@@ -24,6 +24,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timezone
 import polars as pl
+from qhoptim.pyt import QHAdam
 
 from ..metrics import (
     sp_index,
@@ -286,8 +287,8 @@ class LearnableLocality(nn.Module):
     def __init__(self, input_dim, n_path):
         super(LearnableLocality, self).__init__()
         self.weight = nn.Parameter(torch.rand((n_path, input_dim)))
-        # self.smax = sparsemax.Sparsemax(dim=-1)
-        self.smax = sparsemax.Entmax15(dim=-1)
+        # self.smax = Sparsemax(dim=-1)
+        self.smax = Entmax15(dim=-1)
 
     def forward(self, x):
         mask = self.smax(self.weight)
@@ -344,7 +345,7 @@ class InferCapsule(nn.Module):
         self.routing_dim = out_capsule_size
         self.route_weights = nn.Parameter(torch.randn(
             in_capsule_num, out_capsule_num, in_capsule_size, out_capsule_size))
-        self.smax = sparsemax.Entmax15(dim=-2)
+        self.smax = Entmax15(dim=-2)
         self.thread = nn.Parameter(torch.rand(
             1, in_capsule_num, out_capsule_num), requires_grad=True)
         self.routing_leaves = nn.Parameter(
@@ -585,7 +586,7 @@ class TabCaps(L.LightningModule):
     def configure_optimizers(self):
         # Originally it uses QHAdam from here
         # https://github.com/facebookresearch/qhoptim
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = QHAdam(self.parameters(), lr=1e-3)
         return optimizer
 
     def evaluate_on_data(self,
@@ -620,13 +621,15 @@ class TabCaps(L.LightningModule):
 
 class TrainingJob(MLFlowLoggedJob):
     db_path: Path
+    init_dim: int
+    primary_capsule_dim: int
+    digit_capsule_dim: int
+    n_leaves: int
     train_query: str
-    dims: types.DimsType
     val_query: str | None = None
     test_query: str | None = None
     predict_query: str | None = None
     label_col: str | None = 'label'
-    activation: types.ActivationType = 'relu'
     batch_size: types.BatchSizeType = 32
     run_id: types.MLFlowRunId = None
     name: str = 'TabCaps Training Job'
@@ -658,15 +661,21 @@ class TrainingJob(MLFlowLoggedJob):
             test_query=self.test_query,
             predict_query=self.predict_query,
             label_cols=self.label_col,
-            batch_size=self.batch_size)
+            batch_size=self.batch_size,
+            cache=True)
         datamodule.log_to_mlflow()
         class_weights = datamodule.get_class_weights(
             how='balanced'
         )
         mlflow.log_param("class_weights", class_weights)
-        model = TabCaps(dims=self.dims,
-                        class_weights=class_weights,
-                        activation=self.activation)
+        model = TabCaps(input_dim=len(datamodule.feature_cols),
+                        num_class=1,
+                        out_capsule_num=1,
+                        init_dim=self.init_dim,
+                        primary_capsule_dim=self.primary_capsule_dim,
+                        digit_capsule_dim=self.digit_capsule_dim,
+                        n_leaves=self.n_leaves
+                        )
         sample_X, _ = datamodule.get_df_from_query(self.train_query, limit=10)
         with torch.no_grad():
             model.eval()
@@ -826,12 +835,14 @@ app = typer.Typer(
 def create_training(
     db_path: Path,
     train_query: str,
-    dims: types.DimsType,
+    init_dim: int,
+    primary_capsule_dim: int,
+    digit_capsule_dim: int,
+    n_leaves: int,
     val_query: str | None = None,
     test_query: str | None = None,
     predict_query: str | None = None,
     label_col: str | None = TrainingJob.model_fields['label_col'].default,
-    activation: types.ActivationType = TrainingJob.model_fields['activation'].default,
     batch_size: types.BatchSizeType = TrainingJob.model_fields['batch_size'].default,
     name: str = TrainingJob.model_fields['name'].default,
     accelerator: types.AcceleratorType = TrainingJob.model_fields['accelerator'].default,
@@ -854,12 +865,14 @@ def create_training(
     job = TrainingJob(
         db_path=db_path,
         train_query=train_query,
-        dims=dims,
+        init_dim=init_dim,
+        primary_capsule_dim=primary_capsule_dim,
+        digit_capsule_dim=digit_capsule_dim,
+        n_leaves=n_leaves,
         val_query=val_query,
         test_query=test_query,
         predict_query=predict_query,
         label_col=label_col,
-        activation=activation,
         batch_size=batch_size,
         name=name,
         accelerator=accelerator,
@@ -904,13 +917,15 @@ def run_training(
 class KFoldTrainingJob(MLFlowLoggedJob):
     db_path: Path
     table_name: str
-    dims: types.DimsType
+    init_dim: int
+    primary_capsule_dim: int
+    digit_capsule_dim: int
+    n_leaves: int
     best_metric: types.BestMetricType
     best_metric_mode: types.BestMetricModeType
     rings_col: str = 'rings'
     label_col: str = 'label'
     fold_col: str = 'fold'
-    activation: types.ActivationType = TrainingJob.model_fields['activation'].default
     batch_size: types.BatchSizeType = TrainingJob.model_fields['batch_size'].default
     inits: types.InitsType = 5
     folds: types.FoldType = 5
@@ -941,7 +956,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         """
         Generates the training query for a specific fold.
         """
-        query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} != {fold};"
+        query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} != {fold} AND {fold_col} >= 0;"
         feature_cols_str = ', '.join(
             [f'{self.rings_col}[{i+1}]' for i in range(N_RINGS)])
         return query_template.format(
@@ -979,17 +994,20 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                 job_checkpoint_dir = self.checkpoints_dir / \
                     f'fold_{fold}_init_{init}'
                 job_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                job_name = f'{self.name} - fold {fold} - init {init}'
 
                 training_job = TrainingJob(
                     db_path=self.db_path,
+                    init_dim=self.init_dim,
+                    primary_capsule_dim=self.primary_capsule_dim,
+                    digit_capsule_dim=self.digit_capsule_dim,
+                    n_leaves=self.n_leaves,
                     train_query=self.get_train_query(fold),
                     val_query=self.get_val_query(fold),
                     test_query=self.get_test_query(),
-                    dims=self.dims,
                     label_col=self.label_col,
-                    activation=self.activation,
                     batch_size=self.batch_size,
-                    name=self.name,
+                    name=job_name,
                     accelerator=self.accelerator,
                     patience=self.patience,
                     checkpoints_dir=job_checkpoint_dir,
@@ -1225,19 +1243,21 @@ DatasetPathType = Annotated[
     help='Create a K-Fold training run for an TabCaps model.'
 )
 def create_kfold(
-    dims: types.DimsType,
     db_path: Annotated[Path, typer.Option(
         help='Path to the DuckDB database file.'
     )],
     table_name: Annotated[str, typer.Option(
         help='Name of the DuckDB table containing the dataset.'
     )],
+    init_dim: Annotated[int, typer.Option()],
+    primary_capsule_dim: Annotated[int, typer.Option()],
+    digit_capsule_dim: Annotated[int, typer.Option()],
+    n_leaves: Annotated[int, typer.Option()],
     best_metric: types.BestMetricType,
     best_metric_mode: types.BestMetricModeType,
     rings_col: str = KFoldTrainingJob.model_fields['rings_col'].default,
     label_col: str = KFoldTrainingJob.model_fields['label_col'].default,
     fold_col: str = KFoldTrainingJob.model_fields['fold_col'].default,
-    activation: types.ActivationType = KFoldTrainingJob.model_fields['activation'].default,
     batch_size: types.BatchSizeType = KFoldTrainingJob.model_fields['batch_size'].default,
     inits: types.InitsType = KFoldTrainingJob.model_fields['inits'].default,
     folds: types.FoldType = KFoldTrainingJob.model_fields['folds'].default,
@@ -1263,13 +1283,15 @@ def create_kfold(
     job = KFoldTrainingJob(
         db_path=db_path,
         table_name=table_name,
-        dims=dims,
+        init_dim=init_dim,
+        primary_capsule_dim=primary_capsule_dim,
+        digit_capsule_dim=digit_capsule_dim,
+        n_leaves=n_leaves,
         best_metric=best_metric,
         best_metric_mode=best_metric_mode,
         rings_col=rings_col,
         label_col=label_col,
         fold_col=fold_col,
-        activation=activation,
         batch_size=batch_size,
         inits=inits,
         folds=folds,

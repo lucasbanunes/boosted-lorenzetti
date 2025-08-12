@@ -1,7 +1,8 @@
+from functools import cached_property
 import lightning as L
 import duckdb
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Literal, Tuple
 from sklearn.utils import compute_class_weight
 import torch
 import mlflow
@@ -20,7 +21,8 @@ class DuckDBDataset(L.LightningDataModule):
         test_query: str | None = None,
         predict_query: str | None = None,
         label_cols: str | List[str] | None = None,
-        batch_size: int = 32
+        batch_size: int = 32,
+        cache: bool = True
     ):
         super().__init__()
         self.db_path = db_path if isinstance(db_path, Path) else Path(db_path)
@@ -42,8 +44,19 @@ class DuckDBDataset(L.LightningDataModule):
         else:
             self.label_cols = label_cols
         self.batch_size = batch_size
-
+        self.cache = cache
+        self.__clear_cache()
         self.save_hyperparameters()
+
+    def __clear_cache(self):
+        self._train_X = None
+        self._train_y = None
+        self._val_X = None
+        self._val_y = None
+        self._test_X = None
+        self._test_y = None
+        self._predict_X = None
+        self._predict_y = None
 
     def __check_query(self, query: str):
         """
@@ -55,6 +68,133 @@ class DuckDBDataset(L.LightningDataModule):
             raise ValueError("Query must be a SELECT statement.")
 
         return query
+
+    @property
+    def train_X(self) -> pl.DataFrame:
+        """
+        Returns the training features DataFrame.
+        """
+        if self.train_query is None:
+            raise ValueError("Train query is not set.")
+        elif not self.cache:
+            X, _ = self.get_df_from_query(self.train_query)
+            return X
+        if self._train_X is None:
+            self._train_X, self._train_y = self.get_df_from_query(
+                self.train_query)
+        return self._train_X
+
+    @property
+    def train_y(self) -> pl.DataFrame:
+        """
+        Returns the training labels DataFrame.
+        """
+        if self.train_query is None:
+            raise ValueError("Train query is not set.")
+        elif not self.cache:
+            _, y = self.get_df_from_query(self.train_query)
+            return y
+        if self._train_y is None:
+            self._train_X, self._train_y = self.get_df_from_query(
+                self.train_query)
+        return self._train_y
+
+    @cached_property
+    def feature_cols(self) -> List[str]:
+        """
+        Returns the feature columns from the training query.
+        """
+        if self.train_query is None:
+            raise ValueError("Train query is not set.")
+        return list(self.train_X.columns)
+
+    @property
+    def val_X(self) -> pl.DataFrame:
+        """
+        Returns the validation features DataFrame.
+        """
+        if self.val_query is None:
+            raise ValueError("Validation query is not set.")
+        elif not self.cache:
+            X, _ = self.get_df_from_query(self.val_query)
+            return X
+        if self._val_X is None:
+            self._val_X, self._val_y = self.get_df_from_query(self.val_query)
+        return self._val_X
+
+    @property
+    def val_y(self) -> pl.DataFrame:
+        """
+        Returns the validation labels DataFrame.
+        """
+        if self.val_query is None:
+            raise ValueError("Validation query is not set.")
+        elif not self.cache:
+            _, y = self.get_df_from_query(self.val_query)
+            return y
+        if self._val_y is None:
+            self._val_X, self._val_y = self.get_df_from_query(self.val_query)
+        return self._val_y
+
+    @property
+    def test_X(self) -> pl.DataFrame:
+        """
+        Returns the test features DataFrame.
+        """
+        if self.test_query is None:
+            raise ValueError("Test query is not set.")
+        elif not self.cache:
+            X, _ = self.get_df_from_query(self.test_query)
+            return X
+        if self._test_X is None:
+            self._test_X, self._test_y = self.get_df_from_query(
+                self.test_query)
+        return self._test_X
+
+    @property
+    def test_y(self) -> pl.DataFrame:
+        """
+        Returns the test labels DataFrame.
+        """
+        if self.test_query is None:
+            raise ValueError("Test query is not set.")
+        elif not self.cache:
+            _, y = self.get_df_from_query(self.test_query)
+            return y
+        if self._test_y is None:
+            self._test_X, self._test_y = self.get_df_from_query(
+                self.test_query)
+        return self._test_y
+
+    @property
+    def predict_X(self) -> pl.DataFrame:
+        """
+        Returns the prediction features DataFrame.
+        """
+        if self.predict_query is None:
+            raise ValueError("Prediction query is not set.")
+        elif not self.cache:
+            X, _ = self.get_df_from_query(self.predict_query)
+            return X
+        if self._predict_X is None:
+            self._predict_X, self._predict_y = self.get_df_from_query(
+                self.predict_query)
+        return self._predict_X
+
+    @property
+    def predict_y(self) -> pl.DataFrame:
+        """
+        Returns the prediction labels DataFrame.
+        """
+        if self.predict_query is None:
+            raise ValueError("Prediction query is not set.")
+        elif not self.cache:
+            _, y = self.get_df_from_query(self.predict_query)
+            return y
+        if self._predict_y is None:
+            self._predict_X, self._predict_y = self.get_df_from_query(
+                self.predict_query)
+        return self._predict_y
 
     def get_df_from_query(self,
                           query: str,
@@ -78,13 +218,14 @@ class DuckDBDataset(L.LightningDataModule):
             y = X
         return X, y
 
-    def get_dataloader_from_query(self, query: str):
+    def get_dataloader(self, datatype: Literal['train', 'val', 'test', 'predict']) -> torch.utils.data.DataLoader:
         """
         Executes a query on the DuckDB database and returns a DataLoader.
         """
-        X, y = self.get_df_from_query(query)
-        X = X.to_torch()
+        X: pl.DataFrame = getattr(self, f"{datatype}_X")
+        y: pl.DataFrame = getattr(self, f"{datatype}_y")
 
+        X = X.to_torch()
         if self.label_cols:
             y = y.to_torch()
         else:
@@ -163,7 +304,7 @@ class DuckDBDataset(L.LightningDataModule):
         ValueError
             If the train query is not set.
         """
-        return self.get_dataloader_from_query(self.train_query)
+        return self.get_dataloader('train')
 
     def train_df(self) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """
@@ -179,10 +320,7 @@ class DuckDBDataset(L.LightningDataModule):
         ValueError
             If the train query is not set.
         """
-        if self.train_query is None:
-            raise ValueError("Train query is not set.")
-        X, y = self.get_df_from_query(self.train_query)
-        return X, y
+        return self.train_X, self.train_y
 
     def val_dataloader(self) -> torch.utils.data.DataLoader:
         """
@@ -198,9 +336,7 @@ class DuckDBDataset(L.LightningDataModule):
         ValueError
             If the validation query is not set.
         """
-        if self.val_query is None:
-            raise ValueError("Validation query is not set.")
-        return self.get_dataloader_from_query(self.val_query)
+        return self.get_dataloader('val')
 
     def val_df(self) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """
@@ -211,9 +347,7 @@ class DuckDBDataset(L.LightningDataModule):
         Tuple[pl.DataFrame, pl.DataFrame]
             A tuple containing the feature DataFrame and the label DataFrame for validation.
         """
-        if self.val_query is None:
-            raise ValueError("Validation query is not set.")
-        return self.get_df_from_query(self.val_query)
+        return self.val_X, self.val_y
 
     def test_dataloader(self) -> torch.utils.data.DataLoader:
         """
@@ -229,9 +363,7 @@ class DuckDBDataset(L.LightningDataModule):
         ValueError
             If the test query is not set.
         """
-        if self.test_query is None:
-            raise ValueError("Test query is not set.")
-        return self.get_dataloader_from_query(self.test_query)
+        return self.get_dataloader('test')
 
     def test_df(self) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """
@@ -247,9 +379,7 @@ class DuckDBDataset(L.LightningDataModule):
         ValueError
             If the test query is not set.
         """
-        if self.test_query is None:
-            raise ValueError("Test query is not set.")
-        return self.get_df_from_query(self.test_query)
+        return self.test_X, self.test_y
 
     def predict_dataloader(self) -> torch.utils.data.DataLoader:
         """
@@ -265,9 +395,7 @@ class DuckDBDataset(L.LightningDataModule):
         ValueError
             If the prediction query is not set.
         """
-        if self.predict_query is None:
-            raise ValueError("Prediction query is not set.")
-        return self.get_dataloader_from_query(self.predict_query)
+        return self.get_dataloader('predict')
 
     def predict_df(self) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """
@@ -283,6 +411,4 @@ class DuckDBDataset(L.LightningDataModule):
         ValueError
             If the prediction query is not set.
         """
-        if self.predict_query is None:
-            raise ValueError("Prediction query is not set.")
-        return self.get_df_from_query(self.predict_query)
+        return self.predict_X, self.predict_y
