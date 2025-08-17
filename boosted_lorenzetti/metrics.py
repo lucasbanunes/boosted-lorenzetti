@@ -1,7 +1,8 @@
 from numbers import Number
 import numpy as np
-from typing import Literal
+from typing import Literal, Tuple
 import torch
+from torchmetrics.classification import BinaryROC
 
 TORCHMETRICS_FPR_INDEX = 0
 TORCHMETRICS_TPR_INDEX = 1
@@ -111,3 +112,32 @@ def roc_curve(y_true,
     tpr = tpr[argsort]
     fpr = fpr[argsort]
     return tpr, fpr, thresholds.flatten()
+
+
+class MultiThresholdBinaryConfusionMatrix(BinaryROC):
+    """
+    Computes the confusion matrix for multiple thresholds.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.add_state("negatives", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state("positives", default=torch.tensor(0), dist_reduce_fx="sum")
+
+    def update(self, preds: torch.Tensor, target: torch.Tensor):
+        super().update(preds, target)
+        self.negatives += torch.sum(target == 0)
+        self.positives += torch.sum(target == 1)
+
+    def compute(self) -> Tuple[torch.Tensor,
+                               torch.Tensor,
+                               torch.Tensor,
+                               torch.Tensor,
+                               torch.Tensor,
+                               torch.Tensor,
+                               torch.Tensor]:
+        fpr, tpr, thresholds = super().compute()
+        tp = tpr * self.positives
+        tn = (1 - fpr) * self.negatives
+        fp = fpr * self.negatives
+        fn = (1 - tpr) * self.positives
+        return fpr, tpr, tp, tn, fp, fn, thresholds

@@ -1,9 +1,10 @@
+# Here so I don have alter imports
+
 import json
 import logging
 from tempfile import TemporaryDirectory
-import mlflow.artifacts
 from pydantic import BaseModel, Field, PrivateAttr, computed_field
-from typing import Annotated, Any, Dict, Generator, Literal, List, ClassVar
+from typing import Annotated, Any, Dict, Literal, List, ClassVar
 import mlflow
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -12,7 +13,7 @@ from contextlib import contextmanager
 import numpy as np
 import pandas as pd
 
-from . import types
+from .mlflow import tmp_artifact_download
 from .utils import unflatten_dict
 
 
@@ -30,7 +31,8 @@ def log_start_end(start_name: str = 'start',
 class MLFlowLoggedJob(BaseModel, ABC):
 
     BASE_DUMP_EXCLUDE: ClassVar[List[str]] = [
-        'run_id', '_mlflow_run', 'run', 'tags', 'name', 'executed', 'metrics'
+        'run_id', '_mlflow_run', 'run', 'tags', 'name', 'executed', 'metrics',
+        'description'
     ]
 
     DUMP_EXCLUDE: ClassVar[List[str]] = []
@@ -48,6 +50,12 @@ class MLFlowLoggedJob(BaseModel, ABC):
             description="Indicates whether the job has been executed successfully."
         )
     ] = False
+    description: Annotated[
+        str | None,
+        Field(
+            description="A markdown description of the job."
+        )
+    ] = None
     _mlflow_run: Annotated[
         Any,
         PrivateAttr()
@@ -269,7 +277,7 @@ class MLFlowLoggedJob(BaseModel, ABC):
             extra_tags[tag] = getattr(self, tag)
 
         with mlflow.start_run(run_name=self.name, nested=nested,
-                              tags=extra_tags) as run:
+                              tags=extra_tags, description=self.description) as run:
             self.log_params(params)
             self.run_id = run.info.run_id
             yield run
@@ -405,33 +413,6 @@ class MLFlowLoggedJob(BaseModel, ABC):
                 return True
         return False
 
-    @contextmanager
-    def tmp_artifact_download(self,
-                              run_id: str,
-                              artifact_path: str) -> Generator[Path, None, None]:
-        """
-        Download an artifact from a run to a temporary directory.
-
-        Parameters
-        ----------
-        run_id : str
-            The MLFlow run ID from which to download the artifact.
-        artifact_path : str
-            The path to the artifact to download.
-
-        Yields
-        ------
-        Generator[Path, None, None]
-            The path to the downloaded artifact.
-        """
-        with TemporaryDirectory() as tmp_dir:
-            mlflow.artifacts.download_artifacts(
-                run_id=run_id,
-                artifact_path=artifact_path,
-                dst_path=tmp_dir
-            )
-            yield Path(tmp_dir) / artifact_path
-
     def copy_artifact(self,
                       run_id: str,
                       artifact_path: str,
@@ -448,7 +429,7 @@ class MLFlowLoggedJob(BaseModel, ABC):
         dst : str
             The destination path where the artifact should be copied in the current run.
         """
-        with self.tmp_artifact_download(run_id, artifact_path) as tmp_path:
+        with tmp_artifact_download(run_id, artifact_path) as tmp_path:
             mlflow.log_artifact(str(tmp_path), dst)
 
     def load_csv_artifact(self, artifact_path: str,
@@ -473,5 +454,5 @@ class MLFlowLoggedJob(BaseModel, ABC):
         """
         if run_id is None:
             run_id = self.run_id
-        with self.tmp_artifact_download(run_id, artifact_path) as tmp_path:
+        with tmp_artifact_download(run_id, artifact_path) as tmp_path:
             return pd.read_csv(tmp_path, **kwargs)

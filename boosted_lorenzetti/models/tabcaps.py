@@ -1,21 +1,22 @@
+# Part of the code extracted from https://github.com/WhatAShot/TabCaps/tree/main
+
 from contextlib import contextmanager
 from itertools import product
-import mlflow.entities
 import torch
 import torch.nn as nn
 import lightning as L
+import torch.nn.functional as F
+from torch.autograd import Function
+import numpy as np
 from typing import Annotated, Any, Set, Tuple, List, Literal, Dict
+from torchmetrics import MetricCollection
+from torchmetrics.classification import BinaryAccuracy
 import typer
 import mlflow
 from pathlib import Path
 from lightning.pytorch.loggers import MLFlowLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-from torchmetrics import MetricCollection
-from torchmetrics.classification import (
-    BinaryAccuracy,
-    BinaryROC
-)
 from mlflow.models import infer_signature
 import logging
 import shutil
@@ -23,72 +24,494 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timezone
 import polars as pl
+from qhoptim.pyt import QHAdam
 
-from ..dataset.duckdb import DuckDBDataset
-from ..metrics import sp_index
+from ..metrics import (
+    sp_index,
+    MultiThresholdBinaryConfusionMatrix
+)
 from ..log import set_logger
 from .. import types
 from ..constants import N_RINGS
 from ..jobs import MLFlowLoggedJob
 from ..binary_classification import evaluate_on_data
+from .mlp import MLPDataset
 
 
-class MLPDataset(DuckDBDataset):
-
-    def get_df_from_query(self, query: str, limit: str | None = None):
-        X, y = super().get_df_from_query(query, limit)
-        norms = X.sum_horizontal().abs()
-        norms[norms == 0] = 1
-        X[X.columns] = X/norms
-        if not self.label_cols:
-            y = X
-        return X, y
+class TabCapsDataset(MLPDataset):
+    pass
 
 
-class MLP(L.LightningModule):
-    def __init__(self,
-                 dims: List[int],
-                 class_weights: List[float],
-                 activation: Literal['relu'] = 'relu'):
+class MarginLoss(nn.Module):
+    def __init__(self):
+        super(MarginLoss, self).__init__()
+
+    def forward(self, pred, labels):
+        b = labels.shape[0]
+        pred = F.softmax(pred, dim=-1)
+        left = F.relu(0.9 - pred, inplace=True) ** 2
+        right = F.relu(pred - 0.1, inplace=True) ** 2
+
+        margin_loss = labels * left + 0.5 * (1. - labels) * right
+        margin_loss = (margin_loss.sum()) / b
+        return margin_loss
+
+
+"""
+Other possible implementations:
+https://github.com/KrisKorrel/sparsemax-pytorch/blob/master/sparsemax.py
+https://github.com/msobroza/SparsemaxPytorch/blob/master/mnist/sparsemax.py
+https://github.com/vene/sparse-structured-attention/blob/master/pytorch/torchsparseattn/sparsemax.py
+"""
+
+
+# credits to Yandex https://github.com/Qwicen/node/blob/master/lib/nn_utils.py
+def _make_ix_like(input, dim=0):
+    d = input.size(dim)
+    rho = torch.arange(1, d + 1, device=input.device, dtype=input.dtype)
+    view = [1] * input.dim()
+    view[0] = -1
+    return rho.view(view).transpose(0, dim)
+
+
+class SparsemaxFunction(Function):
+    """
+    An implementation of sparsemax (Martins & Astudillo, 2016). See
+    :cite:`DBLP:journals/corr/MartinsA16` for detailed description.
+    By Ben Peters and Vlad Niculae
+    """
+
+    @staticmethod
+    def forward(ctx, input, dim=-1):
+        """sparsemax: normalizing sparse transform (a la softmax)
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function._ContextMethodMixin
+        input : torch.Tensor
+            any shape
+        dim : int
+            dimension along which to apply sparsemax
+
+        Returns
+        -------
+        output : torch.Tensor
+            same shape as input
+
+        """
+        ctx.dim = dim
+        max_val, _ = input.max(dim=dim, keepdim=True)
+        input -= max_val  # same numerical stability trick as for softmax
+        tau, supp_size = SparsemaxFunction._threshold_and_support(
+            input, dim=dim)
+        output = torch.clamp(input - tau, min=0)
+        ctx.save_for_backward(supp_size, output)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        supp_size, output = ctx.saved_tensors
+        dim = ctx.dim
+        grad_input = grad_output.clone()
+        grad_input[output == 0] = 0
+
+        v_hat = grad_input.sum(dim=dim) / supp_size.to(output.dtype).squeeze()
+        v_hat = v_hat.unsqueeze(dim)
+        grad_input = torch.where(output != 0, grad_input - v_hat, grad_input)
+        return grad_input, None
+
+    @staticmethod
+    def _threshold_and_support(input, dim=-1):
+        """Sparsemax building block: compute the threshold
+
+        Parameters
+        ----------
+        input: torch.Tensor
+            any dimension
+        dim : int
+            dimension along which to apply the sparsemax
+
+        Returns
+        -------
+        tau : torch.Tensor
+            the threshold value
+        support_size : torch.Tensor
+
+        """
+
+        input_srt, _ = torch.sort(input, descending=True, dim=dim)
+        input_cumsum = input_srt.cumsum(dim) - 1
+        rhos = _make_ix_like(input, dim)
+        support = rhos * input_srt > input_cumsum
+
+        support_size = support.sum(dim=dim).unsqueeze(dim)
+        tau = input_cumsum.gather(dim, support_size - 1)
+        tau /= support_size.to(input.dtype)
+        return tau, support_size
+
+
+sparsemax = SparsemaxFunction.apply
+
+
+class Sparsemax(nn.Module):
+
+    def __init__(self, dim=-1):
+        self.dim = dim
+        super(Sparsemax, self).__init__()
+
+    def forward(self, input):
+        return sparsemax(input, self.dim)
+
+
+class Entmax15Function(Function):
+    """
+    An implementation of exact Entmax with alpha=1.5 (B. Peters, V. Niculae, A. Martins). See
+    :cite:`https://arxiv.org/abs/1905.05702 for detailed description.
+    Source: https://github.com/deep-spin/entmax
+    """
+
+    @staticmethod
+    def forward(ctx, input, dim=-1):
+        ctx.dim = dim
+
+        max_val, _ = input.max(dim=dim, keepdim=True)
+        input = input - max_val  # same numerical stability trick as for softmax
+        input = input / 2  # divide by 2 to solve actual Entmax
+
+        tau_star, _ = Entmax15Function._threshold_and_support(input, dim)
+        output = torch.clamp(input - tau_star, min=0) ** 2
+        ctx.save_for_backward(output)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        Y, = ctx.saved_tensors
+        gppr = Y.sqrt()  # = 1 / g'' (Y)
+        dX = grad_output * gppr
+        q = dX.sum(ctx.dim) / gppr.sum(ctx.dim)
+        q = q.unsqueeze(ctx.dim)
+        dX -= q * gppr
+        return dX, None
+
+    @staticmethod
+    def _threshold_and_support(input, dim=-1):
+        Xsrt, _ = torch.sort(input, descending=True, dim=dim)
+
+        rho = _make_ix_like(input, dim)
+        mean = Xsrt.cumsum(dim) / rho
+        mean_sq = (Xsrt ** 2).cumsum(dim) / rho
+        ss = rho * (mean_sq - mean ** 2)
+        delta = (1 - ss) / rho
+
+        # NOTE this is not exactly the same as in reference algo
+        # Fortunately it seems the clamped values never wrongly
+        # get selected by tau <= sorted_z. Prove this!
+        delta_nz = torch.clamp(delta, 0)
+        tau = mean - torch.sqrt(delta_nz)
+
+        support_size = (tau <= Xsrt).sum(dim).unsqueeze(dim)
+        tau_star = tau.gather(dim, support_size - 1)
+        return tau_star, support_size
+
+
+class Entmoid15(Function):
+    """ A highly optimized equivalent of lambda x: Entmax15([x, 0]) """
+
+    @staticmethod
+    def forward(ctx, input):
+        output = Entmoid15._forward(input)
+        ctx.save_for_backward(output)
+        return output
+
+    @staticmethod
+    def _forward(input):
+        input, is_pos = abs(input), input >= 0
+        tau = (input + torch.sqrt(F.relu(8 - input ** 2))) / 2
+        tau.masked_fill_(tau <= input, 2.0)
+        y_neg = 0.25 * F.relu(tau - input, inplace=True) ** 2
+        return torch.where(is_pos, 1 - y_neg, y_neg)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return Entmoid15._backward(ctx.saved_tensors[0], grad_output)
+
+    @staticmethod
+    def _backward(output, grad_output):
+        gppr0, gppr1 = output.sqrt(), (1 - output).sqrt()
+        grad_input = grad_output * gppr0
+        q = grad_input / (gppr0 + gppr1)
+        grad_input -= q * gppr0
+        return grad_input
+
+
+entmax15 = Entmax15Function.apply
+entmoid15 = Entmoid15.apply
+
+
+class Entmax15(nn.Module):
+
+    def __init__(self, dim=-1):
+        self.dim = dim
+        super(Entmax15, self).__init__()
+
+    def forward(self, input):
+        return entmax15(input, self.dim)
+
+
+def initialize_glu(module, input_dim, output_dim):
+    gain_value = np.sqrt((input_dim + output_dim) / np.sqrt(input_dim))
+    torch.nn.init.xavier_normal_(module.weight, gain=gain_value)
+    return
+
+
+class GBN(nn.Module):
+    """
+    Ghost Batch Normalization
+    https://arxiv.org/abs/1705.08741
+    """
+
+    def __init__(self, input_dim, virtual_batch_size=256):
+        super(GBN, self).__init__()
+        self.input_dim = input_dim
+        self.virtual_batch_size = virtual_batch_size
+        self.bn = nn.BatchNorm1d(self.input_dim)
+
+    def forward(self, x):
+        chunks = x.chunk(int(np.ceil(x.shape[0] / self.virtual_batch_size)), 0)
+        res = [self.bn(x_) for x_ in chunks]
+        return torch.cat(res, dim=0)
+        # return self.bn(x)
+
+
+class LearnableLocality(nn.Module):
+    def __init__(self, input_dim, n_path):
+        super(LearnableLocality, self).__init__()
+        self.weight = nn.Parameter(torch.rand((n_path, input_dim)))
+        # self.smax = Sparsemax(dim=-1)
+        self.smax = Entmax15(dim=-1)
+
+    def forward(self, x):
+        mask = self.smax(self.weight)
+        masked_x = torch.einsum('nd,bd->bnd', mask, x)  # [B, n_path, D]
+        return masked_x
+
+
+class AbstractLayer(nn.Module):
+    def __init__(self, base_input_dim, base_output_dim, n_path, virtual_batch_size=256):
+        super(AbstractLayer, self).__init__()
+        self.masker = LearnableLocality(
+            input_dim=base_input_dim, n_path=n_path)
+        self.fc = nn.Conv1d(base_input_dim * n_path, 2 * n_path *
+                            base_output_dim, kernel_size=1, groups=n_path)
+        initialize_glu(self.fc, input_dim=base_input_dim * n_path,
+                       output_dim=2 * n_path * base_output_dim)
+        self.n_path = n_path
+        self.base_output_dim = base_output_dim
+        self.bn = GBN(2 * base_output_dim * n_path, virtual_batch_size)
+        # self.bn = nn.LayerNorm(2 * base_output_dim * n_path)
+
+    def forward(self, x):
+        b = x.size(0)
+        x = self.masker(x)  # [B, D] -> [B, n_path, D]
+        # [B, n_path, D] -> [B, n_path * D, 1] -> [B, n_path * (2 * D'), 1]
+        x = self.fc(x.view(b, -1, 1))
+        x = self.bn(x.squeeze())
+        chunks = x.chunk(self.n_path, 1)  # n_path * [B, 2 * D', 1]
+        x = [F.relu(torch.sigmoid(x_[:, :self.base_output_dim]) * x_[:,
+                    self.base_output_dim:]) for x_ in chunks]  # n_path * [B, D', 1]
+        # x = torch.cat(x, dim=1).squeeze()
+        return sum(x)
+
+
+class PrimaryCapsuleGenerator(nn.Module):
+    def __init__(self, num_feature, capsule_dim):
+        super(PrimaryCapsuleGenerator, self).__init__()
+        self.num_feature = num_feature
+        self.capsule_dim = capsule_dim
+        self.fc = nn.Parameter(torch.randn(num_feature, capsule_dim))
+
+    def forward(self, x):
+        out = torch.einsum('bm,md->bmd', x, self.fc)
+        out = torch.cat([out, x[:, :, None]], dim=-1)
+
+        return out.transpose(-1, -2)
+
+
+class InferCapsule(nn.Module):
+    def __init__(self, in_capsule_num, out_capsule_num, in_capsule_size, out_capsule_size, n_leaves):
+        super(InferCapsule, self).__init__()
+        self.in_capsule_num = in_capsule_num
+        self.out_capsule_num = out_capsule_num
+        self.routing_dim = out_capsule_size
+        self.route_weights = nn.Parameter(torch.randn(
+            in_capsule_num, out_capsule_num, in_capsule_size, out_capsule_size))
+        self.smax = Entmax15(dim=-2)
+        self.thread = nn.Parameter(torch.rand(
+            1, in_capsule_num, out_capsule_num), requires_grad=True)
+        self.routing_leaves = nn.Parameter(
+            torch.rand(n_leaves, out_capsule_size))
+        self.ln = nn.LayerNorm(out_capsule_size)
+
+    @staticmethod
+    def js_similarity(x, x_m):
+        # x1, x2 : B, M, N, L
+        dis = torch.mean((x - x_m) ** 2, dim=-1)  # B, M, N
+        return dis
+
+    def new_routing(self, priors):
+        leave_hash = F.normalize(self.routing_leaves, dim=-1)
+        votes = torch.sigmoid(torch.einsum(
+            'ld, bmnd->bmnl', leave_hash, priors))
+        mean_cap = votes.mean(dim=1, keepdim=True)  # B, 1, N, L
+        dis = self.js_similarity(votes, mean_cap)
+        weight = F.relu(self.thread ** 2 - dis)
+        prob = torch.softmax(weight, dim=-2)  # B, M, N
+
+        next_caps = torch.sum(prob[:, :, :, None] * priors, dim=1)
+        return self.ln(next_caps)
+
+    def forward(self, x):
+        weights = self.smax(self.route_weights)
+        priors = torch.einsum('bmd,mndt->bmnt', x, weights)
+        outputs = self.new_routing(priors)
+
+        return outputs
+
+
+class CapsuleEncoder(nn.Module):
+    def __init__(self, input_dim, out_capsule_num, init_dim, primary_capsule_dim, digit_capsule_dim, n_leaves):
+        super(CapsuleEncoder, self).__init__()
+        self.input_dim = input_dim
+        self.init_fc = nn.Linear(input_dim, init_dim)
+        digit_input_dim = init_dim + input_dim
+        self.guass_primary_capsules = PrimaryCapsuleGenerator(
+            digit_input_dim, primary_capsule_dim)
+        self.digit_capsules = InferCapsule(in_capsule_num=primary_capsule_dim + 1, out_capsule_num=out_capsule_num,
+                                           in_capsule_size=digit_input_dim, out_capsule_size=digit_capsule_dim,
+                                           n_leaves=n_leaves)
+        self.ln = nn.LayerNorm(digit_input_dim)
+
+    def forward(self, x):
+        init_x = self.init_fc(x)  # x: B, D'
+        x = self.guass_primary_capsules(torch.cat([x, init_x], dim=1))
+        x = self.ln(x)
+        x = self.digit_capsules(x)  # x: B, N, T
+        return x
+
+
+class CapsuleClassifier(nn.Module):
+    def __init__(self, input_dim, num_class, out_capsule_num, init_dim, primary_capsule_dim, digit_capsule_dim, n_leaves):
+        super(CapsuleClassifier, self).__init__()
+        self.net = CapsuleEncoder(
+            input_dim, out_capsule_num, init_dim, primary_capsule_dim, digit_capsule_dim, n_leaves)
+        self.head = head(num_class)
+
+    def forward(self, x):
+        x = self.net(x)
+        out = self.head(x)
+        return out
+
+
+class ReconstructCapsNet(nn.Module):
+    def __init__(self, input_dim, num_class, out_capsule_num, init_dim, primary_capsule_dim, digit_capsule_dim, n_leaves):
+        super(ReconstructCapsNet, self).__init__()
+        self.encoder = CapsuleEncoder(
+            input_dim, out_capsule_num, init_dim, primary_capsule_dim, digit_capsule_dim, n_leaves)
+        self.num_class = num_class
+        self.sub_class = out_capsule_num // num_class
+        self.digit_capsule_dim = digit_capsule_dim
+        self.head = head(num_class)
+
+        self.decoder = nn.Sequential(
+            CapsuleDecoder_BasicBlock(
+                digit_capsule_dim * self.sub_class, 32, 3),
+            nn.Linear(32, input_dim)
+        )
+
+    def forward(self, x, y=None):
+        hidden = self.encoder(x)
+        pred = self.head(hidden)
+        y = y.repeat(1, (hidden.shape[1] // self.num_class)
+                     ).view(y.shape[0], -1, self.num_class)
+        # [B, out_capsule_num, num_class]
+        hidden = hidden.view(
+            hidden.shape[0], -1, self.num_class, self.digit_capsule_dim)
+        hidden = (hidden * y[:, :, :, None]).sum(dim=2)
+        hidden = hidden.view(hidden.shape[0], -1)
+        rec = self.decoder(hidden)
+        return pred, rec
+
+
+class head(nn.Module):
+    def __init__(self, num_class):
+        super(head, self).__init__()
+        self.num_class = num_class
+
+    def forward(self, x):
+        x = (x ** 2).sum(dim=-1) ** 0.5
+        x = x.view(x.shape[0], self.num_class, -1)
+        if self.training:
+            x = F.dropout(x, p=0.2)
+        out = torch.sum(x, dim=-1)
+        return out
+
+
+class CapsuleDecoder_BasicBlock(nn.Module):
+    def __init__(self, input_dim, base_outdim, n_path):
+        super(CapsuleDecoder_BasicBlock, self).__init__()
+        self.conv1 = AbstractLayer(input_dim, base_outdim // 2, n_path)
+        self.conv2 = AbstractLayer(
+            input_dim + base_outdim // 2, base_outdim, n_path)
+
+    def forward(self, x):
+        out1 = self.conv1(x)
+        out1 = torch.cat([x, out1], dim=-1)
+        out = self.conv2(out1)
+        return out
+
+
+class TabCaps(L.LightningModule):
+    def __init__(self, input_dim, num_class, out_capsule_num, init_dim, primary_capsule_dim, digit_capsule_dim, n_leaves):
         super().__init__()
         self.save_hyperparameters()
-        self.class_weights = torch.FloatTensor(class_weights)
         self.train_metrics = MetricCollection({
-            'acc': BinaryAccuracy(),
-            'roc': BinaryROC()
+            'cm': MultiThresholdBinaryConfusionMatrix(),
+            'acc': BinaryAccuracy()
         })
         self.val_metrics = self.train_metrics.clone()
-        self.example_input_array = torch.randn(5, dims[0])
-        layers = []
-
-        match activation:
-            case 'relu':
-                def activation(): return nn.ReLU()  # noqa: E731
-            case _:
-                raise ValueError(
-                    f'Unsupported activation function: {activation}')
-
-        for input_dim, output_dim in zip(dims[:-1], dims[1:]):
-            layers.append(nn.Linear(input_dim, output_dim))
-            layers.append(activation())
-        layers.pop()  # Remove the last activation
-        self.model = nn.Sequential(*layers)
-        self.loss_func = nn.BCEWithLogitsLoss(reduction='none')
-        self.example_input_array = torch.Tensor(dims[0])
+        self.test_metrics = self.train_metrics.clone()
+        self.model = CapsuleClassifier(
+            input_dim=input_dim,
+            num_class=num_class,
+            out_capsule_num=out_capsule_num,
+            init_dim=init_dim,
+            primary_capsule_dim=primary_capsule_dim,
+            digit_capsule_dim=digit_capsule_dim,
+            n_leaves=n_leaves
+        )
+        self.loss_func = MarginLoss()
+        self.example_input_array = torch.randn(
+            5, input_dim, dtype=torch.float32)
 
     def forward(self, x):
         return self.model(x)
 
     def predict_proba(self, x):
-        logits = self.forward(x)
-        return torch.sigmoid(logits)
+        """
+        Predict probabilities for the input data.
+        """
+        return self.forward(x)
 
     def get_metrics(self, collection_dict: Dict[str, Any]
-                    ) -> Tuple[float, float, float, float, float]:
+                    ) -> Tuple[float,
+                               float,
+                               float,
+                               float,
+                               float]:
         """
         Extracts metrics from the collection dictionary.
         """
-        fpr, tpr, thresh = collection_dict['roc']
+        fpr, tpr, tp, tn, fp, fn, thresh = collection_dict['cm']
         sp = sp_index(
             tpr,
             fpr,
@@ -98,6 +521,10 @@ class MLP(L.LightningModule):
         auc = torch.trapezoid(tpr, fpr)
         return (
             collection_dict['acc'],
+            tp[max_sp_idx],
+            tn[max_sp_idx],
+            fp[max_sp_idx],
+            fn[max_sp_idx],
             sp[max_sp_idx],
             auc,
             fpr[max_sp_idx],
@@ -105,26 +532,21 @@ class MLP(L.LightningModule):
             thresh[max_sp_idx]
         )
 
-    def get_loss(self, logits: torch.Tensor,
-                 y: torch.Tensor) -> torch.Tensor:
-        weights = torch.empty(
-            y.shape, dtype=torch.float32, device=self.device)
-        weights[y == 1] = self.class_weights[1]
-        weights[y == 0] = self.class_weights[0]
-        return torch.mean(weights*self.loss_func(logits, y))
-
     def training_step(self,
                       batch: Tuple[torch.Tensor, torch.Tensor],
                       batch_idx: torch.Tensor):
         x, y = batch
-        logits = self(x)
-        loss = self.get_loss(logits, y.float())
+        prob = self(x)
+        loss = self.loss_func(prob, y.float())
         self.log("train_loss", loss, on_epoch=True, prog_bar=True)
-        prob = torch.sigmoid(logits)
         batch_values = self.train_metrics(prob, y)
-        acc, max_sp, roc_auc, max_sp_fpr, max_sp_tpr, _ = self.get_metrics(
+        acc, tp, tn, fp, fn, max_sp, roc_auc, max_sp_fpr, max_sp_tpr, _ = self.get_metrics(
             batch_values)
         self.log('train_acc', acc, on_epoch=True, prog_bar=True)
+        self.log("train_max_sp_tp", tp, on_epoch=True, prog_bar=True)
+        self.log("train_max_sp_tn", tn, on_epoch=True, prog_bar=True)
+        self.log("train_max_sp_fp", fp, on_epoch=True, prog_bar=True)
+        self.log("train_max_sp_fn", fn, on_epoch=True, prog_bar=True)
         self.log("train_max_sp", max_sp, on_epoch=True, prog_bar=True)
         self.log("train_roc_auc", roc_auc, on_epoch=True, prog_bar=True)
         self.log("train_max_sp_fpr", max_sp_fpr, on_epoch=True)
@@ -139,17 +561,20 @@ class MLP(L.LightningModule):
                         batch: Tuple[torch.Tensor, torch.Tensor],
                         batch_idx: torch.Tensor):
         x, y = batch
-        logits = self(x)
-        loss = self.get_loss(logits, y.float())
-        prob = torch.sigmoid(logits)
+        prob = self(x)
+        loss = self.loss_func(prob, y.float())
         self.val_metrics.update(prob, y)
         self.log("val_loss", loss, on_epoch=True, prog_bar=True)
 
     def on_validation_epoch_end(self):
         metric_values = self.val_metrics.compute()
-        acc, max_sp, roc_auc, max_sp_fpr, max_sp_tpr, max_sp_thresh = self.get_metrics(
+        acc, tp, tn, fp, fn, max_sp, roc_auc, max_sp_fpr, max_sp_tpr, max_sp_thresh = self.get_metrics(
             metric_values)
         self.log('val_acc', acc, on_epoch=True, prog_bar=True)
+        self.log("val_max_sp_tp", tp, on_epoch=True, prog_bar=True)
+        self.log("val_max_sp_tn", tn, on_epoch=True, prog_bar=True)
+        self.log("val_max_sp_fp", fp, on_epoch=True, prog_bar=True)
+        self.log("val_max_sp_fn", fn, on_epoch=True, prog_bar=True)
         self.log("val_max_sp", max_sp, on_epoch=True, prog_bar=True)
         self.log("val_roc_auc", roc_auc, on_epoch=True, prog_bar=True)
         self.log("val_max_sp_fpr", max_sp_fpr, on_epoch=True)
@@ -159,7 +584,9 @@ class MLP(L.LightningModule):
         self.val_metrics.reset()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        # Originally it uses QHAdam from here
+        # https://github.com/facebookresearch/qhoptim
+        optimizer = QHAdam(self.parameters(), lr=1e-3)
         return optimizer
 
     def evaluate_on_data(self,
@@ -194,16 +621,18 @@ class MLP(L.LightningModule):
 
 class TrainingJob(MLFlowLoggedJob):
     db_path: Path
+    init_dim: int
+    primary_capsule_dim: int
+    digit_capsule_dim: int
+    n_leaves: int
     train_query: str
-    dims: types.DimsType
     val_query: str | None = None
     test_query: str | None = None
     predict_query: str | None = None
     label_col: str | None = 'label'
-    activation: types.ActivationType = 'relu'
     batch_size: types.BatchSizeType = 32
     run_id: types.MLFlowRunId = None
-    name: str = 'MLP Training Job'
+    name: str = 'TabCaps Training Job'
     accelerator: types.AcceleratorType = 'cpu'
     patience: types.PatienceType = 10
     checkpoints_dir: types.CheckpointsDirType = Path('checkpoints/')
@@ -213,7 +642,7 @@ class TrainingJob(MLFlowLoggedJob):
                   nested: bool = False,
                   tags: List[str] = [],
                   extra_tags: Dict[str, Any] = {}) -> str:
-        extra_tags['model'] = 'MLP'
+        extra_tags['model'] = 'TabCaps'
         return super().to_mlflow(nested=nested,
                                  tags=tags,
                                  extra_tags=extra_tags)
@@ -225,22 +654,28 @@ class TrainingJob(MLFlowLoggedJob):
 
         exec_start = datetime.now(timezone.utc).timestamp()
         mlflow.log_metric('exec_start', exec_start)
-        datamodule = MLPDataset(
+        datamodule = TabCapsDataset(
             db_path=self.db_path,
             train_query=self.train_query,
             val_query=self.val_query,
             test_query=self.test_query,
             predict_query=self.predict_query,
             label_cols=self.label_col,
-            batch_size=self.batch_size)
+            batch_size=self.batch_size,
+            cache=True)
         datamodule.log_to_mlflow()
         class_weights = datamodule.get_class_weights(
             how='balanced'
         )
         mlflow.log_param("class_weights", class_weights)
-        model = MLP(dims=self.dims,
-                    class_weights=class_weights,
-                    activation=self.activation)
+        model = TabCaps(input_dim=len(datamodule.feature_cols),
+                        num_class=1,
+                        out_capsule_num=1,
+                        init_dim=self.init_dim,
+                        primary_capsule_dim=self.primary_capsule_dim,
+                        digit_capsule_dim=self.digit_capsule_dim,
+                        n_leaves=self.n_leaves
+                        )
         sample_X, _ = datamodule.get_df_from_query(self.train_query, limit=10)
         with torch.no_grad():
             model.eval()
@@ -296,7 +731,7 @@ class TrainingJob(MLFlowLoggedJob):
             "fit_duration", (fit_end - fit_start).total_seconds())
         logging.info('Training completed.')
 
-        best_model = MLP.load_from_checkpoint(
+        best_model = TabCaps.load_from_checkpoint(
             checkpoint.best_model_path
         )
         log_path = tmp_dir / 'model.ckpt'
@@ -389,23 +824,25 @@ class TrainingJob(MLFlowLoggedJob):
 
 
 app = typer.Typer(
-    name='mlp',
-    help='Utility for training MLP models on electron classification data.'
+    name='tabcaps',
+    help='Utility for training TabCaps models on electron classification data.'
 )
 
 
 @app.command(
-    help='Create a training run for an MLP model.'
+    help='Create a training run for an TabCaps model.'
 )
 def create_training(
     db_path: Path,
     train_query: str,
-    dims: types.DimsType,
+    init_dim: int,
+    primary_capsule_dim: int,
+    digit_capsule_dim: int,
+    n_leaves: int,
     val_query: str | None = None,
     test_query: str | None = None,
     predict_query: str | None = None,
     label_col: str | None = TrainingJob.model_fields['label_col'].default,
-    activation: types.ActivationType = TrainingJob.model_fields['activation'].default,
     batch_size: types.BatchSizeType = TrainingJob.model_fields['batch_size'].default,
     name: str = TrainingJob.model_fields['name'].default,
     accelerator: types.AcceleratorType = TrainingJob.model_fields['accelerator'].default,
@@ -428,12 +865,14 @@ def create_training(
     job = TrainingJob(
         db_path=db_path,
         train_query=train_query,
-        dims=dims,
+        init_dim=init_dim,
+        primary_capsule_dim=primary_capsule_dim,
+        digit_capsule_dim=digit_capsule_dim,
+        n_leaves=n_leaves,
         val_query=val_query,
         test_query=test_query,
         predict_query=predict_query,
         label_col=label_col,
-        activation=activation,
         batch_size=batch_size,
         name=name,
         accelerator=accelerator,
@@ -449,7 +888,7 @@ def create_training(
 
 
 @app.command(
-    help='Train an MLP model on ingested data.'
+    help='Train an TabCaps model on ingested data.'
 )
 def run_training(
     run_ids: List[str],
@@ -478,18 +917,20 @@ def run_training(
 class KFoldTrainingJob(MLFlowLoggedJob):
     db_path: Path
     table_name: str
-    dims: types.DimsType
+    init_dim: int
+    primary_capsule_dim: int
+    digit_capsule_dim: int
+    n_leaves: int
     best_metric: types.BestMetricType
     best_metric_mode: types.BestMetricModeType
     rings_col: str = 'rings'
     label_col: str = 'label'
     fold_col: str = 'fold'
-    activation: types.ActivationType = TrainingJob.model_fields['activation'].default
     batch_size: types.BatchSizeType = TrainingJob.model_fields['batch_size'].default
     inits: types.InitsType = 5
     folds: types.FoldType = 5
     run_id: types.MLFlowRunId = None
-    name: str = 'MLP K-Fold Training Job'
+    name: str = 'TabCaps K-Fold Training Job'
     accelerator: types.AcceleratorType = TrainingJob.model_fields['accelerator'].default
     patience: types.PatienceType = TrainingJob.model_fields['patience'].default
     checkpoints_dir: types.CheckpointsDirType = TrainingJob.model_fields[
@@ -515,7 +956,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         """
         Generates the training query for a specific fold.
         """
-        query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} != {fold};"
+        query_template = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} != {fold} AND {fold_col} >= 0;"
         feature_cols_str = ', '.join(
             [f'{self.rings_col}[{i+1}]' for i in range(N_RINGS)])
         return query_template.format(
@@ -545,24 +986,28 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                           nested: bool = False,
                           tags: List[str] = [],
                           extra_tags: Dict[str, Any] = {}):
-        extra_tags['model'] = 'MLP'
+        extra_tags['model'] = 'TabCaps'
         with super().to_mlflow_context(nested=nested, tags=tags, extra_tags=extra_tags) as run:
             logging.info(
                 f'Creating K-Fold training job with run ID: {run.info.run_id}')
             for init, fold in product(range(self.inits), range(self.folds)):
-                job_checkpoint_dir = self.checkpoints_dir / f'fold_{fold}_init_{init}'
+                job_checkpoint_dir = self.checkpoints_dir / \
+                    f'fold_{fold}_init_{init}'
                 job_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                job_name = f'{self.name} - fold {fold} - init {init}'
 
                 training_job = TrainingJob(
                     db_path=self.db_path,
+                    init_dim=self.init_dim,
+                    primary_capsule_dim=self.primary_capsule_dim,
+                    digit_capsule_dim=self.digit_capsule_dim,
+                    n_leaves=self.n_leaves,
                     train_query=self.get_train_query(fold),
                     val_query=self.get_val_query(fold),
                     test_query=self.get_test_query(),
-                    dims=self.dims,
                     label_col=self.label_col,
-                    activation=self.activation,
                     batch_size=self.batch_size,
-                    name=self.name,
+                    name=job_name,
                     accelerator=self.accelerator,
                     patience=self.patience,
                     checkpoints_dir=job_checkpoint_dir,
@@ -609,13 +1054,13 @@ class KFoldTrainingJob(MLFlowLoggedJob):
 
         return children_jobs
 
-    def log_model(self, run_id: str) -> MLP:
+    def log_model(self, run_id: str) -> TabCaps:
         """
         Logs the model from the specified run ID to MLFlow.
         """
         with self.tmp_artifact_download(run_id, 'model.ckpt') as model_ckpt_path:
             mlflow.log_artifact(str(model_ckpt_path))
-            model = MLP.load_from_checkpoint(model_ckpt_path)
+            model = TabCaps.load_from_checkpoint(model_ckpt_path)
             model.eval()
             with torch.no_grad():
                 example_output_array: torch.Tensor = model(
@@ -632,10 +1077,10 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         return model
 
     def evaluate_best_model(self,
-                            model: MLP,
+                            model: TabCaps,
                             val_fold: int):
 
-        dataset = MLPDataset(
+        dataset = TabCapsDataset(
             db_path=self.db_path,
             train_query=self.get_train_query(val_fold),
             val_query=self.get_val_query(val_fold),
@@ -689,10 +1134,6 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         for child in children:
             child_run_id = child.info.run_id
             child_job = TrainingJob.from_mlflow(child_run_id)
-            if child_job.executed:
-                logging.info(f'Child job {child_job.run_id} already executed, skipping.')
-                children_jobs.append(child_job)
-                continue
             logging.info(
                 f'Running child training job with: run ID - {child_run_id} - fold - {child_job.tags["fold"]} - init - {child_job.tags["init"]}')
             child_job.execute(experiment_name=experiment_name,
@@ -702,7 +1143,8 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             children_jobs.append(child_job)
         job_metrics_df_artifact = 'job_metrics.csv'
         if self.artifact_exists(job_metrics_df_artifact):
-            job_metrics_df = self.load_csv_artifact(job_metrics_df_artifact).sort_values('fold')
+            job_metrics_df = self.load_csv_artifact(
+                job_metrics_df_artifact).sort_values('fold')
             logging.info(
                 'Job metrics already exist, skipping metrics calculation.')
         else:
@@ -798,22 +1240,24 @@ DatasetPathType = Annotated[
 
 
 @app.command(
-    help='Create a K-Fold training run for an MLP model.'
+    help='Create a K-Fold training run for an TabCaps model.'
 )
 def create_kfold(
-    dims: types.DimsType,
     db_path: Annotated[Path, typer.Option(
         help='Path to the DuckDB database file.'
     )],
     table_name: Annotated[str, typer.Option(
         help='Name of the DuckDB table containing the dataset.'
     )],
+    init_dim: Annotated[int, typer.Option()],
+    primary_capsule_dim: Annotated[int, typer.Option()],
+    digit_capsule_dim: Annotated[int, typer.Option()],
+    n_leaves: Annotated[int, typer.Option()],
     best_metric: types.BestMetricType,
     best_metric_mode: types.BestMetricModeType,
     rings_col: str = KFoldTrainingJob.model_fields['rings_col'].default,
     label_col: str = KFoldTrainingJob.model_fields['label_col'].default,
     fold_col: str = KFoldTrainingJob.model_fields['fold_col'].default,
-    activation: types.ActivationType = KFoldTrainingJob.model_fields['activation'].default,
     batch_size: types.BatchSizeType = KFoldTrainingJob.model_fields['batch_size'].default,
     inits: types.InitsType = KFoldTrainingJob.model_fields['inits'].default,
     folds: types.FoldType = KFoldTrainingJob.model_fields['folds'].default,
@@ -839,13 +1283,15 @@ def create_kfold(
     job = KFoldTrainingJob(
         db_path=db_path,
         table_name=table_name,
-        dims=dims,
+        init_dim=init_dim,
+        primary_capsule_dim=primary_capsule_dim,
+        digit_capsule_dim=digit_capsule_dim,
+        n_leaves=n_leaves,
         best_metric=best_metric,
         best_metric_mode=best_metric_mode,
         rings_col=rings_col,
         label_col=label_col,
         fold_col=fold_col,
-        activation=activation,
         batch_size=batch_size,
         inits=inits,
         folds=folds,
@@ -863,7 +1309,7 @@ def create_kfold(
 
 
 @app.command(
-    help='Train an MLP model using K-Fold cross-validation.'
+    help='Train an TabCaps model using K-Fold cross-validation.'
 )
 def run_kfold(
     run_id: str,
