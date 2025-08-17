@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=kmlp-lzt
+#SBATCH --job-name=mlp-run-kfold-lzt
 #SBATCH --partition=gpu
 #SBATCH --cpus-per-task=8
 #SBATCH -o /home/lucas.nunes/logs/boosted-lorenzetti/%x-%j.out

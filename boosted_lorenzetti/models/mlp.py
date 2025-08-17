@@ -770,6 +770,10 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         for child in children:
             child_run_id = child.info.run_id
             child_job = TrainingJob.from_mlflow(child_run_id)
+            if child_job.executed:
+                logging.info(f'Child job {child_job.run_id} already executed, skipping.')
+                children_jobs.append(child_job)
+                continue
             logging.info(
                 f'Running child training job with: run ID - {child_run_id} - fold - {child_job.tags["fold"]} - init - {child_job.tags["init"]}')
             child_job.execute(experiment_name=experiment_name,
