@@ -1,6 +1,7 @@
 from pathlib import Path
 import pandas as pd
 import duckdb
+import subprocess
 
 from boosted_lorenzetti.dataset import ntuple, npz
 
@@ -73,5 +74,26 @@ def test_npz_to_duckdb(test_npz_dataset_dir: Path,
     with duckdb.connect(str(output_file)) as con:
         data_df = con.execute("SELECT * FROM data LIMIT 10;").pl()
         assert len(data_df) > 0, "DuckDB file is empty or unreadable."
-        references_df = con.execute("SELECT * FROM model_references LIMIT 10;").pl()
+        references_df = con.execute(
+            "SELECT * FROM model_references LIMIT 10;").pl()
+        assert len(references_df) > 0, "DuckDB file is empty or unreadable."
+
+
+def test_npz_to_duckdb_cli(test_npz_dataset_dir: Path,
+                           repo_path: Path,
+                           tmp_path: Path):
+    output_file = tmp_path / 'test_npz_to_duckdb_cli.duckdb'
+    subprocess.run(['python',
+                    f'{str(repo_path)}/cli.py',
+                    'npz',
+                    'to-duckdb',
+                    '--dataset-dir', str(test_npz_dataset_dir),
+                    '--output-file', str(output_file)])
+    assert output_file.exists(), "Converted DuckDB file does not exist."
+    # Testing if converted format is readable
+    with duckdb.connect(str(output_file)) as con:
+        data_df = con.execute("SELECT * FROM data LIMIT 10;").pl()
+        assert len(data_df) > 0, "DuckDB file is empty or unreadable."
+        references_df = con.execute(
+            "SELECT * FROM model_references LIMIT 10;").pl()
         assert len(references_df) > 0, "DuckDB file is empty or unreadable."

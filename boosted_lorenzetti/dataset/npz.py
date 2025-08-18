@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Annotated
 import typer
 import duckdb
 import numpy as np
@@ -32,9 +33,9 @@ MODEL_REFERENCES_SCHEMA = pl.Schema({
 })
 
 
-@app.command()
-def to_duckdb(dataset_dir: Path,
-              output_file: Path,
+@app.command(help='Converts legacy npz dataset to duckdb databases to make easier to manipulate the data.')
+def to_duckdb(dataset_dir: Annotated[Path, typer.Option(..., help="Path to the input dataset directory.")],
+              output_file: Annotated[Path, typer.Option(..., help="Path to the output DuckDB file.")],
               overwrite: bool = False):
     """
     Converts legacy npz dataset to `.duckdb` databases to make easier to manipulate the data.
@@ -134,10 +135,14 @@ def to_duckdb(dataset_dir: Path,
         eta_bin_idx = data['etaBinIdx']
         for label, data_type in enumerate(['bkgRef', 'sgnRef']):
             for pid, pid_data in data[data_type].items():
-                table_data['et_bin_lower'].append(float(data['etBins'][et_bin_idx]))
-                table_data['et_bin_upper'].append(float(data['etBins'][et_bin_idx + 1]))
-                table_data['eta_bin_lower'].append(float(data['etaBins'][eta_bin_idx]))
-                table_data['eta_bin_upper'].append(float(data['etaBins'][eta_bin_idx + 1]))
+                table_data['et_bin_lower'].append(
+                    float(data['etBins'][et_bin_idx]))
+                table_data['et_bin_upper'].append(
+                    float(data['etBins'][et_bin_idx + 1]))
+                table_data['eta_bin_lower'].append(
+                    float(data['etaBins'][eta_bin_idx]))
+                table_data['eta_bin_upper'].append(
+                    float(data['etaBins'][eta_bin_idx + 1]))
                 table_data['pid'].append(str(pid))
                 table_data['label'].append(int(label))
                 table_data['total'].append(int(pid_data['total']))
@@ -150,6 +155,8 @@ def to_duckdb(dataset_dir: Path,
 
     with duckdb.connect(str(output_file)) as con:
         if not check_table_exists(con, 'model_references'):
-            con.execute("CREATE TABLE IF NOT EXISTS model_references AS SELECT * FROM reference_df")
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS model_references AS SELECT * FROM reference_df")
         else:
-            con.execute("INSERT INTO model_references SELECT * FROM reference_df")
+            con.execute(
+                "INSERT INTO model_references SELECT * FROM reference_df")

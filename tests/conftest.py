@@ -29,6 +29,7 @@ def n_folds() -> int:
 def test_dataset_path(test_data_dir: Path) -> Path:
     return test_data_dir / 'test_dataset.duckdb'
 
+
 @pytest.fixture(scope='session')
 def test_npz_dataset_dir(test_data_dir: Path) -> Path:
     return test_data_dir / 'npz_dataset'
