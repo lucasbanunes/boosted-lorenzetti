@@ -412,3 +412,19 @@ class DuckDBDataset(L.LightningDataModule):
             If the prediction query is not set.
         """
         return self.predict_X, self.predict_y
+
+
+def check_table_exists(con, table_name):
+    """
+    Checks if a table exists in the DuckDB database.
+
+    Args:
+        con: A DuckDB connection object.
+        table_name: The name of the table to check.
+
+    Returns:
+        True if the table exists, False otherwise.
+    """
+    query = f"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '{table_name}')"
+    result = con.execute(query).fetchone()[0]
+    return result

@@ -23,6 +23,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timezone
 import polars as pl
+from ..mlflow import tmp_artifact_download
 
 from ..dataset.duckdb import DuckDBDataset
 from ..metrics import sp_index
@@ -613,7 +614,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         """
         Logs the model from the specified run ID to MLFlow.
         """
-        with self.tmp_artifact_download(run_id, 'model.ckpt') as model_ckpt_path:
+        with tmp_artifact_download(run_id, 'model.ckpt') as model_ckpt_path:
             mlflow.log_artifact(str(model_ckpt_path))
             model = MLP.load_from_checkpoint(model_ckpt_path)
             model.eval()

@@ -2,7 +2,7 @@ from pathlib import Path
 import pandas as pd
 import duckdb
 
-from boosted_lorenzetti.dataset import ntuple
+from boosted_lorenzetti.dataset import ntuple, npz
 
 
 def test_convert_ntuple_to_parquet(test_data_dir: Path,
@@ -15,7 +15,8 @@ def test_convert_ntuple_to_parquet(test_data_dir: Path,
     assert output_file.exists(), "Converted file does not exist."
 
     # Testing if converted format is readable
-    assert pd.read_parquet(output_file, dtype_backend='pyarrow').shape[0] > 0, "Parquet file is empty or unreadable."
+    assert pd.read_parquet(
+        output_file, dtype_backend='pyarrow').shape[0] > 0, "Parquet file is empty or unreadable."
 
 
 def test_convert_ntuple_to_duckdb(test_data_dir: Path,
@@ -59,3 +60,18 @@ def test_create_dataset(test_data_dir: Path,
     with duckdb.connect(str(output_file)) as con:
         df = con.execute(f"SELECT * FROM {table_name}").fetchdf()
     assert len(df) > 0, "Created dataset is empty or unreadable."
+
+
+def test_npz_to_duckdb(test_npz_dataset_dir: Path,
+                       tmp_path: Path):
+    output_file = tmp_path / 'test_npz_to_duckdb.duckdb'
+    npz.to_duckdb(dataset_dir=test_npz_dataset_dir,
+                  output_file=output_file,
+                  overwrite=True)
+    assert output_file.exists(), "Converted DuckDB file does not exist."
+    # Testing if converted format is readable
+    with duckdb.connect(str(output_file)) as con:
+        data_df = con.execute("SELECT * FROM data LIMIT 10;").pl()
+        assert len(data_df) > 0, "DuckDB file is empty or unreadable."
+        references_df = con.execute("SELECT * FROM model_references LIMIT 10;").pl()
+        assert len(references_df) > 0, "DuckDB file is empty or unreadable."
