@@ -72,11 +72,13 @@ def test_npz_to_duckdb(test_npz_dataset_dir: Path,
     assert output_file.exists(), "Converted DuckDB file does not exist."
     # Testing if converted format is readable
     with duckdb.connect(str(output_file)) as con:
-        data_df = con.execute("SELECT * FROM data LIMIT 10;").pl()
+        data_df = con.execute("SELECT * FROM data;").pl()
         assert len(data_df) > 0, "DuckDB file is empty or unreadable."
+        assert len(data_df['id'].unique()) == len(data_df), "data_df ids are not unique"
         references_df = con.execute(
-            "SELECT * FROM model_references LIMIT 10;").pl()
+            "SELECT * FROM model_references").pl()
         assert len(references_df) > 0, "DuckDB file is empty or unreadable."
+        assert len(references_df['id'].unique()) == len(references_df), "references_df ids are not unique"
 
 
 def test_npz_to_duckdb_cli(test_npz_dataset_dir: Path,
@@ -92,8 +94,10 @@ def test_npz_to_duckdb_cli(test_npz_dataset_dir: Path,
     assert output_file.exists(), "Converted DuckDB file does not exist."
     # Testing if converted format is readable
     with duckdb.connect(str(output_file)) as con:
-        data_df = con.execute("SELECT * FROM data LIMIT 10;").pl()
+        data_df = con.execute("SELECT * FROM data;").pl()
         assert len(data_df) > 0, "DuckDB file is empty or unreadable."
+        assert len(data_df['id'].unique()) == len(data_df), "data_df ids are not unique"
         references_df = con.execute(
-            "SELECT * FROM model_references LIMIT 10;").pl()
+            "SELECT * FROM model_references").pl()
         assert len(references_df) > 0, "DuckDB file is empty or unreadable."
+        assert len(references_df['id'].unique()) == len(references_df), "references_df ids are not unique"

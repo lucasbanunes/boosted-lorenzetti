@@ -92,6 +92,7 @@ def to_duckdb(dataset_dir: Annotated[Path, typer.Option(..., help="Path to the i
         output_file.unlink(missing_ok=True)
 
     with duckdb.connect(str(output_file)) as con:
+        sample_count = 0
         for i, filepath in enumerate(dataset_dir.glob('*.npz')):
             logging.info(f'Processing file {i}: {filepath}')
             npz_file = np.load(filepath)
@@ -113,13 +114,18 @@ def to_duckdb(dataset_dir: Annotated[Path, typer.Option(..., help="Path to the i
                     orient='row'
                 )
             )
-            aux_df = pl.concat(feature_dfs, how='horizontal')
+            aux_df: pl.DataFrame = pl.concat(feature_dfs, how='horizontal')
             del feature_dfs
+            if 'id' not in aux_df.columns:
+                aux_df = aux_df.with_columns(
+                    pl.Series('id', np.arange(sample_count, sample_count+len(aux_df)))
+                )
             if i == 0 and not check_table_exists(con, 'data'):
                 con.execute(
                     "CREATE TABLE IF NOT EXISTS data AS SELECT * FROM aux_df")
             else:
                 con.execute("INSERT INTO data SELECT * FROM aux_df")
+            sample_count += len(aux_df)
             del aux_df
 
     references_dir = dataset_dir / 'references'
@@ -148,9 +154,12 @@ def to_duckdb(dataset_dir: Annotated[Path, typer.Option(..., help="Path to the i
                 table_data['total'].append(int(pid_data['total']))
                 table_data['passed'].append(int(pid_data['passed']))
                 table_data['reference'].append(str(pid_data['reference']))
-    reference_df = pl.from_dict(  # noqa: F841 Ignores the unused variable
+    reference_df = pl.from_dict(
         dict(table_data),
         schema=MODEL_REFERENCES_SCHEMA
+    )
+    reference_df = reference_df.with_columns(
+        pl.Series('id', np.arange(len(reference_df)))
     )
 
     with duckdb.connect(str(output_file)) as con:
