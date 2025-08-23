@@ -23,8 +23,10 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timezone
 import polars as pl
-from ..mlflow import tmp_artifact_download
 
+
+from .torch import torch_module_from_string
+from ..mlflow import tmp_artifact_download
 from ..dataset.duckdb import DuckDBDataset
 from ..metrics import sp_index
 from ..log import set_logger
@@ -44,6 +46,21 @@ class MLPDataset(DuckDBDataset):
         if not self.label_cols:
             y = X
         return X, y
+
+
+def build_mlp(
+        dims: List[int],
+        activations: List[str | None]
+):
+    model = nn.Sequential()
+    iterator = zip(dims[:-1],
+                   dims[1:],
+                   activations)
+    for input_dim, output_dim, activation in iterator:
+        model.append(nn.Linear(input_dim, output_dim))
+        if activation is not None:
+            model.append(torch_module_from_string(activation))
+    return model
 
 
 class MLP(L.LightningModule):

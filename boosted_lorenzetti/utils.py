@@ -2,6 +2,7 @@ from typing import Literal, Iterable, Iterator, Generator, Any
 from numbers import Number
 import logging
 from pathlib import Path
+import numpy as np
 
 
 def open_directories(
@@ -220,3 +221,30 @@ def unflatten_dict(flat_dict: dict[str, Any], separator: str = '.') -> dict[str,
         d[parts[-1]] = unflatted_dict_process_value(value)
 
     return unflattened
+
+
+def seed_factory() -> int:
+    return int(np.random.randint(np.iinfo(np.int32).max - 10))
+
+
+def fullname(obj: Any) -> str:
+    """
+    Returns the fully qualified class name of an object.
+    Source:
+    https://stackoverflow.com/questions/2020014/get-fully-qualified-class-name-of-an-object-in-python
+
+    Parameters
+    ----------
+    obj : Any
+        The object to get the fully qualified class name for.
+
+    Returns
+    -------
+    str
+        The fully qualified class name of the object.
+    """
+    klass = obj.__class__
+    module = klass.__module__
+    if module == 'builtins':
+        return klass.__qualname__  # avoid outputs like 'builtins.str'
+    return module + '.' + klass.__qualname__

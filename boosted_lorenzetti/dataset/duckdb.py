@@ -218,6 +218,9 @@ class DuckDBDataset(L.LightningDataModule):
             y = X
         return X, y
 
+    def get_sample(self, limit: int = 10) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        return self.get_df_from_query(self.train_query, limit=limit)
+
     def get_dataloader(self, datatype: Literal['train', 'val', 'test', 'predict']) -> torch.utils.data.DataLoader:
         """
         Executes a query on the DuckDB database and returns a DataLoader.
