@@ -2,7 +2,8 @@ from tempfile import TemporaryDirectory
 import mlflow
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any, Generator, List
+import mlflow.entities
 import mlflow.exceptions
 import pandas as pd
 import json
@@ -144,3 +145,54 @@ def load_pickle(
     with tmp_artifact_download(run_id, artifact_path) as tmp_path:
         with open(tmp_path, 'rb') as f:
             return pickle.load(f)
+
+
+def copy_artifact(run_id: str,
+                  artifact_path: str,
+                  dst: str | None = None):
+    """
+    Copy an artifact from another run to the current run.
+
+    Parameters
+    ----------
+    run_id : str
+        The MLFlow run ID from which to copy the artifact.
+    artifact_path : str
+        The path to the artifact in the source run.
+    dst : str | None
+        The destination path where the artifact should be copied in the current run.
+    """
+    with tmp_artifact_download(run_id, artifact_path) as tmp_path:
+        mlflow.log_artifact(str(tmp_path), dst)
+
+
+def get_children(run_id: str,
+                 experiment_ids: List[str], tracking_uri: str | None = None) -> List[mlflow.entities.Run]:
+    """
+    Get the child runs of a given MLflow run.
+
+    Parameters
+    ----------
+    run_id : str
+        The MLflow run ID.
+    experiment_id: List[str]
+        The id of the MLflow experiment.
+    tracking_uri: str | None
+        The tracking URI to use for the MLflow client.
+
+    Returns
+    -------
+    List[mlflow.entities.Run]
+        A list of Run objects representing the child runs.
+    """
+    client = mlflow.MlflowClient(
+        tracking_uri=tracking_uri
+    )
+    filter_string = f"tags.mlflow.parentRunId = '{run_id}'"
+    runs = client.search_runs(
+        experiment_ids=experiment_ids,
+        filter_string=filter_string,
+        run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
+        max_results=1000
+    )
+    return runs

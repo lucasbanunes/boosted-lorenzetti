@@ -1,4 +1,4 @@
-from typing import Literal, Iterable, Iterator, Generator, Any
+from typing import Literal, Iterable, Iterator, Generator, Any, Dict, Mapping
 from numbers import Number
 import logging
 from pathlib import Path
@@ -221,6 +221,35 @@ def unflatten_dict(flat_dict: dict[str, Any], separator: str = '.') -> dict[str,
         d[parts[-1]] = unflatted_dict_process_value(value)
 
     return unflattened
+
+
+def flatten_dict(unflat_dict: Mapping[str, Any]) -> Dict[str, Any]:
+
+    """
+    Flattens a Mapping with multiple levels of nesting.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A flat dictionary with concatenated keys.
+    """
+
+    flat_dict = {}
+    for key, value in unflat_dict.items():
+        if isinstance(value, Mapping):
+            value = flatten_dict(value)
+            for subkey, subvalue in value.items():
+                flat_dict[f"{key}.{subkey}"] = subvalue
+        elif isinstance(value, str):
+            # str is an iterable and we do not want to open it
+            flat_dict[key] = value
+        elif isinstance(value, Iterable):
+            for i, item in enumerate(value):
+                flat_dict[f"{key}.{i}"] = flatten_dict(item)
+        else:
+            flat_dict[key] = value
+
+    return flat_dict
 
 
 def seed_factory() -> int:
