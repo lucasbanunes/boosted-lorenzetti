@@ -2,7 +2,7 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import pyarrow as pa
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Annotated
 from pathlib import Path
 import ROOT
 from mlflow.types import Schema, ColSpec
@@ -379,17 +379,33 @@ def to_pyarrow(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TC
     return table
 
 
-@app.command()
-def to_parquet(input_file: List[str],
-               output_file: str,
-               ttree_name: str = 'physics',
-               open_vectors: bool = False) -> None:
+@app.command(
+    help='Converts ntuple files to parquet files'
+)
+def to_parquet(
+        input_file: Annotated[
+            str,
+            typer.Option(help="Path to the input ntuple file.")
+        ],
+        output_file: Annotated[
+            str,
+            typer.Option(help="Path to the output parquet file.")
+        ],
+        ttree_name: Annotated[
+            str,
+            typer.Option(help="NTuple Tree name inside the .root file")
+        ] = 'physics',
+        open_vectors: Annotated[
+            bool,
+            typer.Option(
+                help="If True, open vector fields (e.g., lists) as field_name.index columns.")
+        ] = False) -> None:
     """
     Convert ntuple root files to a ntuple parquet file.
 
     Parameters
     ----------
-    input_file : List[str]
+    input_file : str
         The path to the input ntuple file.
     output_file : str
         The path where the output parquet file will be saved.
@@ -595,8 +611,10 @@ def create_dataset(ntuple_paths: List[str],
 )
 def cli_create_dataset(
     ntuple_files: List[str],
-    output_path: Path = typer.Option(..., help="Path to the output DuckDB file."),
-    lzt_version: str = typer.Option(..., help="Version of the boosted-lorenzetti library."),
+    output_path: Path = typer.Option(...,
+                                     help="Path to the output DuckDB file."),
+    lzt_version: str = typer.Option(...,
+                                    help="Version of the boosted-lorenzetti library."),
     tracking_uri: str | None = None,
     experiment_name: str = 'boosted-lorenzetti',
     n_folds: int = CreateDatabaseJob.model_fields['n_folds'].default,

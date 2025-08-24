@@ -1,14 +1,16 @@
 from functools import cached_property
+import logging
 import lightning as L
 import duckdb
 from pathlib import Path
-from typing import List, Literal, Tuple
+from typing import List, Literal, Tuple, Annotated
 from sklearn.utils import compute_class_weight
 import torch
 import mlflow
 import numpy as np
 import pandas as pd
 import polars as pl
+import typer
 
 
 class DuckDBDataset(L.LightningDataModule):
@@ -431,3 +433,61 @@ def check_table_exists(con, table_name):
     query = f"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '{table_name}')"
     result = con.execute(query).fetchone()[0]
     return result
+
+
+app = typer.Typer(
+    name='duckdb',
+    help='Duckdb database operation utilities')
+
+
+@app.command(
+    help='Adds a table to a DuckDB database from a list of Parquet file patterns.'
+)
+def add_table_from_parquet(
+    files: Annotated[
+        List[str],
+        typer.Argument(
+            help='List of parquet file patterns to load. Supports the patterns supported by duckdb read_parquet function'
+        )
+    ],
+    db_path: Annotated[
+        Path,
+        typer.Option(
+            help='Path to the duckdb database file'
+        )
+    ],
+    table_name: Annotated[
+        str,
+        typer.Option(
+            help='Table name in which to save the data'
+        )
+    ],
+    overwrite: Annotated[
+        bool,
+        typer.Option(
+            help='Whether to overwrite the table if it exists'
+        )
+    ] = False
+):
+    """
+    Adds a table to a DuckDB database from a list of Parquet file patterns.
+
+    Parameters
+    ----------
+    files : List[str]
+        List of parquet file patterns to load. Supports the patterns supported by duckdb read_parquet
+    db_path : Path
+        Path to the duckdb database file
+    table_name : str
+        Table name in which to save the data
+    overwrite : bool
+        Whether to overwrite the table if it exists
+    """
+
+    with duckdb.connect(str(db_path)) as con:
+        for i, file in enumerate(files):
+            logging.info(f'{i} - Adding {file} to {db_path}')
+            if i < 1 and (overwrite or (not check_table_exists(con, table_name))):
+                con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_parquet('{file}')")
+            else:
+                con.execute(f"INSERT INTO {table_name} SELECT * FROM read_parquet('{file}')")

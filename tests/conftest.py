@@ -33,3 +33,8 @@ def test_dataset_path(test_data_dir: Path) -> Path:
 @pytest.fixture(scope='session')
 def test_npz_dataset_dir(test_data_dir: Path) -> Path:
     return test_data_dir / 'npz_dataset'
+
+
+@pytest.fixture(scope='session')
+def test_zee_parquet_dataset_dir(test_data_dir: Path) -> Path:
+    return test_data_dir / 'zee_parquet_dataset'

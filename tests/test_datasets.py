@@ -4,13 +4,14 @@ import duckdb
 import subprocess
 
 from boosted_lorenzetti.dataset import ntuple, npz
+from boosted_lorenzetti.dataset import duckdb as boosted_duckdb
 
 
 def test_convert_ntuple_to_parquet(test_data_dir: Path,
                                    tmp_path: Path):
     test_file = test_data_dir / 'test.NTUPLE.root'
     output_file = tmp_path / 'test.NTUPLE.parquet'
-    ntuple.to_parquet([str(test_file)],
+    ntuple.to_parquet(str(test_file),
                       output_file=str(output_file),
                       ttree_name='physics')
     assert output_file.exists(), "Converted file does not exist."
@@ -74,11 +75,13 @@ def test_npz_to_duckdb(test_npz_dataset_dir: Path,
     with duckdb.connect(str(output_file)) as con:
         data_df = con.execute("SELECT * FROM data;").pl()
         assert len(data_df) > 0, "DuckDB file is empty or unreadable."
-        assert len(data_df['id'].unique()) == len(data_df), "data_df ids are not unique"
+        assert len(data_df['id'].unique()) == len(
+            data_df), "data_df ids are not unique"
         references_df = con.execute(
             "SELECT * FROM model_references").pl()
         assert len(references_df) > 0, "DuckDB file is empty or unreadable."
-        assert len(references_df['id'].unique()) == len(references_df), "references_df ids are not unique"
+        assert len(references_df['id'].unique()) == len(
+            references_df), "references_df ids are not unique"
 
 
 def test_npz_to_duckdb_cli(test_npz_dataset_dir: Path,
@@ -96,8 +99,25 @@ def test_npz_to_duckdb_cli(test_npz_dataset_dir: Path,
     with duckdb.connect(str(output_file)) as con:
         data_df = con.execute("SELECT * FROM data;").pl()
         assert len(data_df) > 0, "DuckDB file is empty or unreadable."
-        assert len(data_df['id'].unique()) == len(data_df), "data_df ids are not unique"
+        assert len(data_df['id'].unique()) == len(
+            data_df), "data_df ids are not unique"
         references_df = con.execute(
             "SELECT * FROM model_references").pl()
         assert len(references_df) > 0, "DuckDB file is empty or unreadable."
-        assert len(references_df['id'].unique()) == len(references_df), "references_df ids are not unique"
+        assert len(references_df['id'].unique()) == len(
+            references_df), "references_df ids are not unique"
+
+
+def test_duckdb_add_table_from_parquet(test_zee_parquet_dataset_dir: Path,
+                                       tmp_path: Path):
+    output_file = tmp_path / 'test_duckdb_add_table_from_parquet.duckdb'
+    boosted_duckdb.add_table_from_parquet(
+        db_path=str(output_file),
+        table_name='physics',
+        files=[str(test_zee_parquet_dataset_dir) + '/*.parquet']
+    )
+    assert output_file.exists(), "Converted DuckDB file does not exist."
+    # Testing if converted format is readable
+    with duckdb.connect(str(output_file)) as con:
+        df = con.execute("SELECT * FROM physics").pl()
+    assert len(df) > 0, "DuckDB file is empty or unreadable."
