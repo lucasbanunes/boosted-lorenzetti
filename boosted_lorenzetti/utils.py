@@ -205,22 +205,18 @@ def unflatten_dict(flat_dict: dict[str, Any], separator: str = '.') -> dict[str,
     dict[str, Any]
         The unflattened dictionary.
     """
-    unflattened = {}
+    result = {}
     for key, value in flat_dict.items():
-
-        if '.' not in key:
-            unflattened[key] = unflatted_dict_process_value(value)
-            continue
-
-        # Split the key by the separator and build the nested structure
         parts = key.split(separator)
-        d = unflattened
-        for part in parts[:-1]:
-            # This works because d is passed by reference
-            d = d.setdefault(part, {})
-        d[parts[-1]] = unflatted_dict_process_value(value)
-
-    return unflattened
+        current_dict = result
+        for i, part in enumerate(parts):
+            if i == len(parts) - 1:  # Last part is the actual key for the value
+                current_dict[part] = value
+            else:
+                if part not in current_dict:
+                    current_dict[part] = {}
+                current_dict = current_dict[part]
+    return result
 
 
 def flatten_dict(unflat_dict: Mapping[str, Any]) -> Dict[str, Any]:
