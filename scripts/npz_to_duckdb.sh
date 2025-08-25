@@ -20,6 +20,5 @@ command="${command} --output-file ${output_file}"
 
 echo "Running command ${command} on ${img}"
 singularity exec \
-    --nv \
     --bind /mnt/cern_data:/mnt/cern_data \
     $SIF_IMGS_DIR/$img /usr/bin/bash -c "${command}"
