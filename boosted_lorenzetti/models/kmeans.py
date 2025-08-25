@@ -1,6 +1,6 @@
 from collections import defaultdict
 from functools import cached_property
-from typing import Annotated, Any, ClassVar, Dict, Literal, List
+from typing import Annotated, Any, ClassVar, Dict, Literal, List, Tuple
 from pathlib import Path
 import mlflow
 from sklearn.cluster import KMeans
@@ -193,6 +193,11 @@ class KMeansTrainingJob(MLFlowLoggedJob):
     MODEL_ARTIFACT_PATH: ClassVar[str] = 'model.pkl'
     CLUSTER_CENTERS_ARTIFACT_PATH: ClassVar[str] = 'cluster_centers.json'
     INVALID_SCORE: ClassVar[float] = -1e6
+    PER_CLUSTER_METRICS: ClassVar[List[str]] = [
+        'inertia',
+        'variance'
+    ]
+    METRICS_PER_CLUSTER_ARTIFACT_PATH: ClassVar[str] = 'metrics_per_cluster.csv'
 
     db_path: DBPathType
     train_query: TrainQueryType
@@ -211,6 +216,9 @@ class KMeansTrainingJob(MLFlowLoggedJob):
     model: KMeans | None = None
     cluster_centers: Dict[str, List[float]] = {}
     metrics: Dict[str, Any] = {}
+    metrics_per_cluster: pd.DataFrame = pd.DataFrame(
+        columns=PER_CLUSTER_METRICS + ['cluster', 'data']
+    )
 
     @cached_property
     def datamodule(self) -> DuckDBDataset:
@@ -278,6 +286,11 @@ class KMeansTrainingJob(MLFlowLoggedJob):
                 run_id=run.info.run_id,
                 artifact_path=cls.CLUSTER_CENTERS_ARTIFACT_PATH
             )
+        if boosted_mlflow.artifact_exists(run_id, cls.METRICS_PER_CLUSTER_ARTIFACT_PATH):
+            kwargs['metrics_per_cluster'] = boosted_mlflow.load_mlflow_csv(
+                run_id=run.info.run_id,
+                artifact_path=cls.METRICS_PER_CLUSTER_ARTIFACT_PATH
+            )
         full_metrics = unflatten_dict(run.data.metrics)
         metric_keys = ['train', 'val', 'test']
         kwargs['metrics'] = {key: full_metrics.get(
@@ -291,26 +304,32 @@ class KMeansTrainingJob(MLFlowLoggedJob):
     def evaluate(self,
                  X: np.ndarray,
                  y_pred: np.ndarray,
-                 y_true: np.ndarray) -> Dict[str, Any]:
-        # cm = confusion_matrix(y_true, y_pred)
-        # tn, fp, fn, tp = cm.ravel().tolist()
-        # positives = tp + fn
-        # negatives = tn + fp
-        # total = positives + negatives
-        evaluation = {
-            # 'true_negatives': tn,
-            # 'false_positives': fp,
-            # 'false_negatives': fn,
-            # 'true_positives': tp,
-            # 'true_positive_rate': tp / positives if positives > 0 else 0,
-            # 'false_positive_rate': fp / negatives if negatives > 0 else 0,
-            # 'accuracy': (tp + tn) / total if total > 0 else 0,
-            # 'samples': total,
-            'silhouette_score': silhouette_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
-            'calinski_harabasz_score': calinski_harabasz_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
-            'davies_bouldin_score': davies_bouldin_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE
-        }
-        return evaluation
+                 y_true: np.ndarray,
+                 cluster_centers: np.ndarray,
+                 inertia: float) -> Tuple[Dict[str, Any], pd.DataFrame]:
+
+        per_cluster_evaluation = {key: [] for key in self.PER_CLUSTER_METRICS}
+        per_cluster_evaluation['cluster'] = []
+        evaluation = {}
+
+        evaluation['silhouette_score'] = silhouette_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE
+        evaluation['calinski_harabasz_score'] = calinski_harabasz_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE
+        evaluation['davies_bouldin_score'] = davies_bouldin_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE
+
+        for i, center in enumerate(cluster_centers):
+            per_cluster_evaluation['cluster'].append(i)
+            in_cluster = y_pred == i
+            inertia = np.sum((X[in_cluster] - center.reshape(1, -1)) ** 2)
+            per_cluster_evaluation['inertia'].append(inertia)
+            variance = inertia / np.sum(in_cluster)
+            per_cluster_evaluation['variance'].append(variance)
+            del in_cluster
+
+        per_cluster_evaluation = pd.DataFrame.from_dict(per_cluster_evaluation)
+        evaluation['inertia'] = inertia
+        evaluation['variance'] = evaluation['inertia']/len(X)
+
+        return evaluation, per_cluster_evaluation
 
     def log_model(self):
         mlflow.sklearn.log_model(
@@ -318,6 +337,12 @@ class KMeansTrainingJob(MLFlowLoggedJob):
             name='model',
             signature=self.model_signature
         )
+
+    def log_metrics(self, tmp_dir: Path):
+        mlflow.log_metrics(flatten_dict(self.metrics))
+        csv_path = tmp_dir / self.METRICS_PER_CLUSTER_ARTIFACT_PATH
+        self.metrics_per_cluster.to_csv(csv_path, index=False)
+        mlflow.log_artifact(str(csv_path))
 
     def exec(self,
              tmp_dir: Path,
@@ -345,8 +370,6 @@ class KMeansTrainingJob(MLFlowLoggedJob):
         train_y = train_y.to_numpy()
         logging.info('Fitting Kmeans')
         self.model.fit(train_X)
-        mlflow.log_metric('inertia', self.model.inertia_)
-        self.metrics['inertia'] = self.model.inertia_
         cluster_centers = {
             i: cluster_center.tolist()
             for i, cluster_center in enumerate(
@@ -358,40 +381,53 @@ class KMeansTrainingJob(MLFlowLoggedJob):
             json.dump(cluster_centers, f, indent=4)
         mlflow.log_artifact(str(cluster_centers_filepath))
 
+        logging.info('Evaluating on training data')
         train_y_pred = self.model.predict(train_X)
-        train_evaluation = self.evaluate(
-            train_X, train_y_pred, train_y)
+        train_evaluation, train_per_cluster_evaluation = self.evaluate(
+            train_X, train_y_pred, train_y, self.model.cluster_centers_, self.model.inertia_)
         del train_X, train_y, train_y_pred
-        for k, v in train_evaluation.items():
-            mlflow.log_metric(f'train.{k}', v)
+        train_per_cluster_evaluation['data'] = 'train'
+        self.metrics_per_cluster = pd.concat(
+            [self.metrics_per_cluster, train_per_cluster_evaluation],
+            axis=0
+        )
         self.metrics['train'] = train_evaluation
 
         if self.val_query:
+            logging.info('Evaluating on validation data')
             val_X, val_y = self.datamodule.val_df()
             val_X = val_X.to_numpy()
             val_y = val_y.to_numpy()
             val_y_pred = self.model.predict(val_X)
 
-            val_evaluation = self.evaluate(
-                val_X, val_y_pred, val_y)
+            val_evaluation, val_per_cluster_evaluation = self.evaluate(
+                val_X, val_y_pred, val_y, self.model.cluster_centers_, self.model.inertia_)
             del val_X, val_y_pred, val_y
-            for k, v in val_evaluation.items():
-                mlflow.log_metric(f'val.{k}', v)
+            val_per_cluster_evaluation['data'] = 'val'
+            self.metrics_per_cluster = pd.concat(
+                [self.metrics_per_cluster, val_per_cluster_evaluation],
+                axis=0
+            )
             self.metrics['val'] = val_evaluation
 
         if self.test_query:
+            logging.info('Evaluating on test data')
             test_X, test_y = self.datamodule.test_df()
             test_X = test_X.to_numpy()
             test_y = test_y.to_numpy()
             test_y_pred = self.model.predict(test_X)
 
-            test_evaluation = self.evaluate(
-                test_X, test_y_pred, test_y)
+            test_evaluation, test_per_cluster_evaluation = self.evaluate(
+                test_X, test_y_pred, test_y, self.model.cluster_centers_, self.model.inertia_)
             del test_X, test_y_pred, test_y
-            for k, v in test_evaluation.items():
-                mlflow.log_metric(f'test.{k}', v)
+            test_per_cluster_evaluation['data'] = 'test'
+            self.metrics_per_cluster = pd.concat(
+                [self.metrics_per_cluster, test_per_cluster_evaluation],
+                axis=0
+            )
             self.metrics['test'] = test_evaluation
 
+        self.log_metrics(tmp_dir)
         self.log_model()
 
         model_filepath = tmp_dir / self.MODEL_ARTIFACT_PATH
@@ -520,7 +556,7 @@ class BestClusterNumberSearch(MLFlowLoggedJob):
 
     MODEL_ARTIFACT_PATH: ClassVar[str] = 'model.pkl'
     CLUSTER_CENTERS_ARTIFACT_PATH: ClassVar[str] = 'cluster_centers.json'
-    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.csv'
+    CHILDREN_METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.csv'
     INERTIA_PLOT_ARTIFACT_PATH: ClassVar[str] = 'inertia_plot.html'
 
     db_path: DBPathType
@@ -541,6 +577,8 @@ class BestClusterNumberSearch(MLFlowLoggedJob):
     cluster_centers: Dict[str, List[float]] = {}
     metrics: Dict[str, Any] = {}
     children: List[KMeansTrainingJob] = []
+    children_metrics: pd.DataFrame | None = None
+    best_job: KMeansTrainingJob | None = None
 
     @cached_property
     def datamodule(self) -> DuckDBDataset:
@@ -614,6 +652,11 @@ class BestClusterNumberSearch(MLFlowLoggedJob):
                 run_id=run.info.run_id,
                 artifact_path=cls.CLUSTER_CENTERS_ARTIFACT_PATH
             )
+        if boosted_mlflow.artifact_exists(run_id, cls.CHILDREN_METRICS_ARTIFACT_PATH):
+            kwargs['children_metrics'] = boosted_mlflow.load_mlflow_csv(
+                run_id=run.info.run_id,
+                artifact_path=cls.CHILDREN_METRICS_ARTIFACT_PATH
+            )
 
         full_metrics = unflatten_dict(run.data.metrics)
         metric_keys = ['train', 'val', 'test']
@@ -628,6 +671,10 @@ class BestClusterNumberSearch(MLFlowLoggedJob):
             KMeansTrainingJob.from_mlflow_run(run)
             for run in boosted_mlflow.get_children(run_id, [run.info.experiment_id])
         ]
+
+        best_job_id = run.data.params.get('best_job', None)
+        if best_job_id is not None:
+            kwargs['best_job'] = KMeansTrainingJob.from_mlflow_run_id(best_job_id)
         return cls(**kwargs)
 
     def exec(self,
@@ -652,35 +699,41 @@ class BestClusterNumberSearch(MLFlowLoggedJob):
             for key, value in flatten_dict(child.metrics).items():
                 metrics[key].append(value)
 
-        metrics = pd.DataFrame.from_dict(metrics).sort_values(by='n_clusters')
-        metrics['inertia_diff'] = metrics['inertia'].diff()
-        metrics_filepath = tmp_dir / self.METRICS_ARTIFACT_PATH
+        metrics = pd.DataFrame.from_dict(metrics).sort_values(by='n_clusters').reset_index(drop=True)
+        metrics['train.inertia_diff'] = metrics['train.inertia'].diff()
+        if 'val.inertia' in metrics.columns:
+            metrics['val.inertia_diff'] = metrics['val.inertia'].diff()
+        if 'test.inertia' in metrics.columns:
+            metrics['test.inertia_diff'] = metrics['test.inertia'].diff()
+        metrics_filepath = tmp_dir / self.CHILDREN_METRICS_ARTIFACT_PATH
         metrics.to_csv(metrics_filepath, index=False)
         mlflow.log_artifact(str(metrics_filepath))
 
-        best_job_arg = metrics['inertia_diff'].argmin()
-        best_job = self.children[best_job_arg]
+        best_job_arg = metrics['train.inertia_diff'].argmin()
+        self.best_job = self.children[best_job_arg]
+        mlflow.log_param('best_job', self.best_job.id_)
         boosted_mlflow.copy_artifact(
-            best_job.id_,
-            best_job.MODEL_ARTIFACT_PATH
+            self.best_job.id_,
+            self.best_job.MODEL_ARTIFACT_PATH
         )
         boosted_mlflow.copy_artifact(
-            best_job.id_,
-            best_job.CLUSTER_CENTERS_ARTIFACT_PATH
+            self.best_job.id_,
+            self.best_job.CLUSTER_CENTERS_ARTIFACT_PATH
         )
-        mlflow.log_metrics(flatten_dict(best_job.metrics))
-        best_job.log_model()
+        mlflow.log_metrics(flatten_dict(self.best_job.metrics))
+        self.best_job.log_metrics(tmp_dir)
+        self.best_job.log_model()
 
-        fig = px.line(metrics, x='n_clusters', y='inertia')
+        fig = px.line(metrics, x='n_clusters', y='train.inertia')
         fig.update_layout(
             title='Inertia as a function of clusters',
             xaxis_title='Number of clusters',
             yaxis_title='Inertia'
         )
-        fig.add_vline(x=best_job.n_clusters,
+        fig.add_vline(x=self.best_job.n_clusters,
                       line_dash="dash",
                       line_color="red",
-                      annotation_text=f'{best_job.metrics["inertia"]}',
+                      annotation_text=f'{self.best_job.metrics["train"]["inertia"]}',
                       annotation_position="top left")
         mlflow.log_figure(fig, self.INERTIA_PLOT_ARTIFACT_PATH)
 
