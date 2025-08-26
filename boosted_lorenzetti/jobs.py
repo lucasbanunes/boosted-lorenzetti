@@ -2,7 +2,7 @@ import json
 import logging
 from tempfile import TemporaryDirectory
 from pydantic import BaseModel, Field, PrivateAttr, computed_field
-from typing import Annotated, Any, Dict, Literal, List
+from typing import Annotated, Any, Dict, Literal
 import mlflow
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -52,7 +52,7 @@ DescriptionType = Annotated[
 class MLFlowLoggedJob(BaseModel, ABC):
 
     id_: IdType = None
-    name: NameType = 'KMeans Training Job'
+    name: NameType = 'MlFlow Logged Job'
     description: DescriptionType = ''
     executed: Annotated[
         bool,
@@ -171,7 +171,7 @@ class MLFlowLoggedJob(BaseModel, ABC):
         return new_params
 
     @classmethod
-    def from_mlflow_run(cls, run: Any) -> 'MLFlowLoggedJob':
+    def from_mlflow_run(cls, run: mlflow.entities.Run) -> 'MLFlowLoggedJob':
         """
         Create an instance of the job from an MLFlow run.
 
@@ -252,8 +252,7 @@ class MLFlowLoggedJob(BaseModel, ABC):
 
     def to_mlflow(self,
                   nested: bool = False,
-                  tags: List[str] = [],
-                  extra_tags: Dict[str, Any] = {}) -> str:
+                  tags: Dict[str, Any] = {}) -> str:
         """
         Log the job to MLFlow.
 
@@ -262,10 +261,7 @@ class MLFlowLoggedJob(BaseModel, ABC):
         nested : bool, optional
             If True, the job will be logged as a nested run under the current active run.
             If False, it will be logged as a top-level run. Default is False.
-        tags : List[str], optional
-            A list of class attributes to be added to the MLFlow run as tags. These tags can be used
-            to categorize or filter runs in the MLFlow UI. Default is an empty list.
-        extra_tags : Dict[str, Any], optional
+        tags : Dict[str, Any], optional
             A dictionary of additional tags to be added to the MLFlow run.
             These tags can include any metadata relevant to the job, such as
             job type, version, or any other custom information. Default is an empty dictionary.
@@ -276,7 +272,8 @@ class MLFlowLoggedJob(BaseModel, ABC):
         """
         with mlflow.start_run(run_name=self.name,
                               description=self.description,
-                              nested=nested) as run:
+                              nested=nested,
+                              tags=tags) as run:
             class_name = fullname(self)
             mlflow.log_param('class_name', class_name)
             self._to_mlflow()

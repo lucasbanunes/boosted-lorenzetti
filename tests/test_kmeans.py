@@ -68,7 +68,7 @@ def test_best_cluster_number_search(test_dataset_path: Path):
         test_query=test_query,
         label_cols='label',
         experiment_name=experiment_name,
-        clusters=[1, 2, 3]
+        clusters=[1, 2, 3, 4, 5]
     )
 
     kmeans.run_best_cluster_number_search(
@@ -77,3 +77,29 @@ def test_best_cluster_number_search(test_dataset_path: Path):
     )
 
     kmeans.BestClusterNumberSearch.from_mlflow_run_id(run_id)
+
+
+def test_kfold_kmeans(test_dataset_path: Path):
+    experiment_name = 'test_kfold_kmeans'
+
+    ring_cols = [f'cl_rings[{i+1}]' for i in range(N_RINGS)]
+
+    run_id = kmeans.create_kfold(
+        db_path=test_dataset_path,
+        table_name='data',
+        feature_cols=ring_cols,
+        best_metric='test.inertia',
+        best_metric_mode='min',
+        n_folds=5,
+        clusters=list(range(1, 5)),
+        label_col='label',
+        fold_col='fold',
+        experiment_name=experiment_name,
+    )
+
+    kmeans.run_kfold(
+        run_ids=[run_id],
+        experiment_name=experiment_name
+    )
+
+    kmeans.KFoldKMeansTrainingJob.from_mlflow_run_id(run_id)
