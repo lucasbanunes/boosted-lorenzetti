@@ -1,6 +1,6 @@
 from collections import defaultdict
 from functools import cached_property
-from typing import Annotated, Any, ClassVar, Dict, Iterable, Literal, List, Tuple
+from typing import Annotated, Any, ClassVar, Dict, Literal, List, Tuple
 from pathlib import Path
 import mlflow
 import mlflow.entities
@@ -12,7 +12,9 @@ import numpy as np
 from sklearn.metrics import (
     silhouette_score,
     calinski_harabasz_score,
-    davies_bouldin_score
+    davies_bouldin_score,
+    accuracy_score,
+    confusion_matrix
 )
 import json
 import logging
@@ -338,27 +340,36 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
                  y_pred: np.ndarray,
                  y_true: np.ndarray,
                  cluster_centers: np.ndarray,
-                 inertia: float,
-                 classes: Iterable[int] | None = None) -> Tuple[Dict[str, Any], pd.DataFrame]:
+                 inertia: float) -> Tuple[Dict[str, Any], pd.DataFrame]:
 
+        if len(y_true.shape) > 1:
+            y_true = y_true.flatten()
         per_cluster_evaluation = {
             'cluster': [],
             'inertia': [],
             'variance': [],
-            'n_samples': []
+            'n_samples': [],
+            'class_': []
         }
-        if classes is None:
-            classes = np.unique(y_true)
-        for class_ in classes:
+        classes, class_counts = np.unique(y_true, return_counts=True)
+        class_count_dict = dict(zip(classes, class_counts))
+        for class_ in class_count_dict.keys():
             per_cluster_evaluation[f'class_{class_}_samples'] = []
+            per_cluster_evaluation[f'class_{class_}_ratio'] = []
 
         evaluation = {
             'inertia': inertia,
             'variance': inertia/len(X),
             'silhouette_score': silhouette_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
             'calinski_harabasz_score': calinski_harabasz_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
-            'davies_bouldin_score': davies_bouldin_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE
+            'davies_bouldin_score': davies_bouldin_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
+            'accuracy': -1,
         }
+        dict_keys = [
+            'tp', 'tn', 'fp', 'fn', 'tpr', 'fpr'
+        ]
+        for key in dict_keys:
+            evaluation[key] = {}
 
         for i, center in enumerate(cluster_centers):
             per_cluster_evaluation['cluster'].append(i)
@@ -369,11 +380,37 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
             per_cluster_evaluation['n_samples'].append(n_samples)
             variance = inertia / n_samples
             per_cluster_evaluation['variance'].append(variance)
-            for class_ in classes:
-                per_cluster_evaluation[f'class_{class_}_samples'].append(np.sum((y_true == class_) & in_cluster))
+            max_class_ratio = -1
+            cluster_class = -1
+            for class_, class_count in class_count_dict.items():
+                cluster_class_samples = np.sum((y_true == class_) & in_cluster)
+                class_ratio = 100*(cluster_class_samples / class_count)
+                if class_ratio > max_class_ratio:
+                    max_class_ratio = class_ratio
+                    cluster_class = class_
+                per_cluster_evaluation[f'class_{class_}_samples'].append(cluster_class_samples)
+                per_cluster_evaluation[f'class_{class_}_ratio'].append(class_ratio)
+            per_cluster_evaluation['class_'].append(cluster_class)
             del in_cluster
 
         per_cluster_evaluation = pd.DataFrame.from_dict(per_cluster_evaluation)
+
+        cluster_classification = per_cluster_evaluation['class_'].to_dict()
+
+        y_pred_classes = np.array([cluster_classification[i] for i in y_pred], dtype=np.uint8)
+        evaluation['accuracy'] = accuracy_score(y_true, y_pred_classes)
+        for class_ in class_count_dict.keys():
+            class_y_true = (y_true == class_).astype(np.uint8)
+            class_y_pred_classes = (y_pred_classes == class_).astype(np.uint8)
+            cm = confusion_matrix(class_y_true, class_y_pred_classes)
+            class_key = f'class_{class_}'
+            evaluation['tp'][class_key] = int(cm[1, 1])
+            evaluation['fp'][class_key] = int(cm[0, 1])
+            evaluation['tn'][class_key] = int(cm[0, 0])
+            evaluation['fn'][class_key] = int(cm[1, 0])
+            evaluation['tpr'][class_key] = cm[1, 1] / (cm[1, 1] + cm[1, 0]) if (cm[1, 1] + cm[1, 0]) > 0 else -1
+            evaluation['fpr'][class_key] = cm[0, 1] / (cm[0, 1] + cm[0, 0]) if (cm[0, 1] + cm[0, 0]) > 0 else -1
+            del cm, class_y_true, class_y_pred_classes
 
         return evaluation, per_cluster_evaluation
 

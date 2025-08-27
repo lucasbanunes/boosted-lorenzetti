@@ -240,7 +240,7 @@ class DuckDBDataset(L.LightningDataModule):
 
         return torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
-    def __get_mlflow_dataset(self, query: str):
+    def __get_mlflow_dataset(self, query: str, name: str | None = None):
         X, y = self.get_df_from_query(query, limit=10)
 
         # Casting to ensure mlflow knows how to log the dataset
@@ -256,11 +256,13 @@ class DuckDBDataset(L.LightningDataModule):
                 break
 
         df = pd.concat([X, y], axis=1)
+        if name is None:
+            name = self.db_path.stem
         dataset = mlflow.data.from_pandas(
             df,
             source=str(self.db_path),
-            name=self.db_path.stem,
-            targets=','.join(y.columns.tolist())
+            name=name,
+            targets=','.join(y.columns.tolist()),
         )
         return dataset
 
@@ -282,17 +284,21 @@ class DuckDBDataset(L.LightningDataModule):
         )
         return class_weights
 
-    def log_to_mlflow(self):
-        train_dataset = self.__get_mlflow_dataset(self.train_query)
+    def log_to_mlflow(self,
+                      train_name: str | None = None,
+                      val_name: str | None = None,
+                      test_name: str | None = None,
+                      predict_name: str | None = None):
+        train_dataset = self.__get_mlflow_dataset(self.train_query, train_name)
         mlflow.log_input(train_dataset, context='training')
         if self.val_query:
-            val_dataset = self.__get_mlflow_dataset(self.val_query)
+            val_dataset = self.__get_mlflow_dataset(self.val_query, val_name)
             mlflow.log_input(val_dataset, context='validation')
         if self.test_query:
-            test_dataset = self.__get_mlflow_dataset(self.test_query)
+            test_dataset = self.__get_mlflow_dataset(self.test_query, test_name)
             mlflow.log_input(test_dataset, context='test')
         if self.predict_query:
-            predict_dataset = self.__get_mlflow_dataset(self.predict_query)
+            predict_dataset = self.__get_mlflow_dataset(self.predict_query, predict_name)
             mlflow.log_input(predict_dataset, context='prediction')
 
     def train_dataloader(self) -> torch.utils.data.DataLoader:
