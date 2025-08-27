@@ -1,5 +1,5 @@
 import numpy as np
-import typer
+import cyclopts
 from pydantic import Field
 from typing import Annotated, List
 from pathlib import Path
@@ -17,7 +17,7 @@ SeedType = Annotated[
         default_factory=seed_factory,
         description=SEED_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--seed",
         help=SEED_DESCRIPTION,
     )
@@ -43,7 +43,7 @@ CheckpointsDirType = Annotated[
     Field(
         description=CHECKPOINTS_DIR_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=CHECKPOINTS_DIR_DESCRIPTION,
     )
 ]
@@ -57,7 +57,7 @@ BatchSizeType = Annotated[
     Field(
         description=BATCH_SIZE_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--batch-size",
         help=BATCH_SIZE_DESCRIPTION,
     )
@@ -70,7 +70,7 @@ DimsType = Annotated[
     Field(
         description=DIMS_DESCRIPTION
     ),
-    typer.Argument(
+    cyclopts.Parameter(
         help=DIMS_DESCRIPTION,
     )
 ]
@@ -84,7 +84,7 @@ ActivationType = Annotated[
     Field(
         description=ACTIVATION_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--activation",
         help=ACTIVATION_DESCRIPTION,
     )
@@ -99,7 +99,7 @@ DfNameType = Annotated[
     Field(
         description=DF_NAME_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--df-name",
         help=DF_NAME_DESCRIPTION,
     )
@@ -115,7 +115,7 @@ FoldColType = Annotated[
         default='fold',
         description=FOLD_COLUMN_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--fold-col",
         help=FOLD_COLUMN_DESCRIPTION,
     )
@@ -130,7 +130,7 @@ FeatureColsType = Annotated[
     Field(
         description=FEATURE_COLS_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--feature-cols",
         help=FEATURE_COLS_DESCRIPTION,
     )
@@ -145,7 +145,7 @@ LabelColsType = Annotated[
     Field(
         description=LABEL_COLS_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--label",
         help=LABEL_COLS_DESCRIPTION,
     )
@@ -160,7 +160,7 @@ InitType = Annotated[
     Field(
         description=INIT_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--init",
         help=INIT_DESCRIPTION,
     )
@@ -175,7 +175,7 @@ FoldType = Annotated[
     Field(
         description=FOLD_DESCRTIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--fold",
         help=FOLD_DESCRTIPTION,
     )
@@ -190,7 +190,7 @@ AcceleratorType = Annotated[
     Field(
         description=ACCELERATOR_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--accelerator",
         help=ACCELERATOR_DESCRIPTION,
     )
@@ -205,7 +205,7 @@ PatienceType = Annotated[
     Field(
         description=PATEINCE_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--patience",
         help=PATEINCE_DESCRIPTION,
     )
@@ -220,7 +220,7 @@ InitsType = Annotated[
     Field(
         description=INITS_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--inits",
         help=INITS_DESCRIPTION,
     )
@@ -235,7 +235,7 @@ TrackingUriType = Annotated[
     Field(
         description=TRACKING_URI_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--tracking-uri",
         help=TRACKING_URI_DESCRIPTION,
     )
@@ -250,7 +250,7 @@ ExperimentNameType = Annotated[
     Field(
         description=EXPERIMENT_NAME_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--experiment-name",
         help=EXPERIMENT_NAME_DESCRIPTION,
     )
@@ -270,7 +270,7 @@ MaxEpochsType = Annotated[
     Field(
         description=MAX_EPOCHS_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--max-epochs",
         help=MAX_EPOCHS_DESCRIPTION,
     )
@@ -285,7 +285,7 @@ BestMetricType = Annotated[
     Field(
         description=BEST_METRIC_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--best-metric",
         help=BEST_METRIC_DESCRIPTION,
     )
@@ -300,7 +300,7 @@ BestMetricModeType = Annotated[
     Field(
         description=BEST_METRIC_MODE_DESCRIPTION
     ),
-    typer.Option(
+    cyclopts.Parameter(
         "--best-metric-mode",
         help=BEST_METRIC_MODE_DESCRIPTION,
     )

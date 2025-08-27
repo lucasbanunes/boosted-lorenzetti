@@ -2,6 +2,7 @@ from pathlib import Path
 import pandas as pd
 import duckdb
 import subprocess
+import logging
 
 from boosted_lorenzetti.dataset import ntuple, npz
 from boosted_lorenzetti.dataset import duckdb as boosted_duckdb
@@ -88,12 +89,18 @@ def test_npz_to_duckdb_cli(test_npz_dataset_dir: Path,
                            repo_path: Path,
                            tmp_path: Path):
     output_file = tmp_path / 'test_npz_to_duckdb_cli.duckdb'
-    subprocess.run(['python',
-                    f'{str(repo_path)}/cli.py',
-                    'npz',
-                    'to-duckdb',
-                    '--dataset-dir', str(test_npz_dataset_dir),
-                    '--output-file', str(output_file)])
+    logging.info("Running NPZ to DuckDB conversion via CLI")
+    logging.info(f"Dataset dir: {test_npz_dataset_dir}\n"
+                 f"Output file: {output_file}")
+    result = subprocess.run(['python',
+                             f'{str(repo_path)}/cli.py',
+                             'npz',
+                             'to-duckdb',
+                             '--dataset-dir', str(test_npz_dataset_dir),
+                             '--output-file', str(output_file)],
+                            capture_output=True, text=True)
+    logging.info("STDOUT: %s", result.stdout)
+    logging.error("STDERR: %s", result.stderr)
     assert output_file.exists(), "Converted DuckDB file does not exist."
     # Testing if converted format is readable
     with duckdb.connect(str(output_file)) as con:

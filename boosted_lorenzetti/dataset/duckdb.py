@@ -10,7 +10,7 @@ import mlflow
 import numpy as np
 import pandas as pd
 import polars as pl
-import typer
+import cyclopts
 
 
 class DuckDBDataset(L.LightningDataModule):
@@ -441,7 +441,7 @@ def check_table_exists(con, table_name):
     return result
 
 
-app = typer.Typer(
+app = cyclopts.App(
     name='duckdb',
     help='Duckdb database operation utilities')
 
@@ -452,25 +452,25 @@ app = typer.Typer(
 def add_table_from_parquet(
     files: Annotated[
         List[str],
-        typer.Argument(
+        cyclopts.Parameter(
             help='List of parquet file patterns to load. Supports the patterns supported by duckdb read_parquet function'
         )
     ],
     db_path: Annotated[
         Path,
-        typer.Option(
+        cyclopts.Parameter(
             help='Path to the duckdb database file'
         )
     ],
     table_name: Annotated[
         str,
-        typer.Option(
+        cyclopts.Parameter(
             help='Table name in which to save the data'
         )
     ],
     overwrite: Annotated[
         bool,
-        typer.Option(
+        cyclopts.Parameter(
             help='Whether to overwrite the table if it exists'
         )
     ] = False

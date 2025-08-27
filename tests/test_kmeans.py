@@ -103,3 +103,25 @@ def test_kfold_kmeans(test_dataset_path: Path):
     )
 
     kmeans.KFoldKMeansTrainingJob.from_mlflow_run_id(run_id)
+
+
+def test_kfold_kmeans_cli(test_dataset_path: Path):
+    experiment_name = 'test_kfold_kmeans'
+
+    ring_cols = [f'cl_rings[{i+1}]' for i in range(N_RINGS)]
+
+    subprocess.run(['python',
+                    'cli.py',
+                    'kmeans',
+                    'create-kfold',
+                    '--db-path', str(test_dataset_path),
+                    '--table-name', 'data',
+                    '--feature-cols'] + ring_cols + [
+                    '--best-metric', 'test.inertia',
+                    '--best-metric-mode', 'min',
+                    '--n-folds', '5',
+                    '--clusters', '1', '2', '3', '4', '5',
+                    '--label-col', 'label',
+                    '--fold-col', 'fold',
+                    '--experiment-name', experiment_name,
+                    ])

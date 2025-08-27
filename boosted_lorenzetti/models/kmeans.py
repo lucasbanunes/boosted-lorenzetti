@@ -19,9 +19,9 @@ from sklearn.metrics import (
 import json
 import logging
 import pickle
-import typer
 import pandas as pd
 import plotly.express as px
+import cyclopts
 
 from ..utils import seed_factory, unflatten_dict, flatten_dict
 from ..dataset.duckdb import DuckDBDataset
@@ -35,7 +35,7 @@ DBPathType = Annotated[
     Field(
         description=DB_PATH_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=DB_PATH_TYPE_HELP
     )
 ]
@@ -46,7 +46,7 @@ TrainQueryType = Annotated[
     Field(
         description=TRAIN_QUERY_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=TRAIN_QUERY_TYPE_HELP
     )
 ]
@@ -57,7 +57,7 @@ ValQueryType = Annotated[
     Field(
         description=VAL_QUERY_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=VAL_QUERY_TYPE_HELP
     )
 ]
@@ -68,7 +68,7 @@ TestQueryType = Annotated[
     Field(
         description=TEST_QUERY_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=TEST_QUERY_TYPE_HELP
     )
 ]
@@ -79,7 +79,7 @@ LabelColsType = Annotated[
     Field(
         description=LABEL_COLS_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=LABEL_COLS_TYPE_HELP
     )
 ]
@@ -90,7 +90,7 @@ NClustersType = Annotated[
     Field(
         description=N_CLUSTERS_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=N_CLUSTERS_TYPE_HELP
     )
 ]
@@ -101,7 +101,7 @@ InitType = Annotated[
     Field(
         description=INIT_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=INIT_TYPE_HELP
     )
 ]
@@ -120,7 +120,7 @@ MaxIterType = Annotated[
     Field(
         description=MAX_ITER_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=MAX_ITER_TYPE_HELP
     )
 ]
@@ -131,7 +131,7 @@ TolType = Annotated[
     Field(
         description=TOL_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=TOL_TYPE_HELP
     )
 ]
@@ -142,7 +142,7 @@ VerboseType = Annotated[
     Field(
         description=VERBOSE_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=VERBOSE_TYPE_HELP
     )
 ]
@@ -154,7 +154,7 @@ RandomStateType = Annotated[
         default_factory=seed_factory,
         description=RANDOM_STATE_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=RANDOM_STATE_TYPE_HELP
     )
 ]
@@ -165,7 +165,7 @@ CopyXType = Annotated[
     Field(
         description=COPY_X_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=COPY_X_TYPE_HELP
     )
 ]
@@ -177,7 +177,7 @@ AlgorithmType = Annotated[
         default='lloyd',
         description=ALGORITHM_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=ALGORITHM_TYPE_HELP
     )
 ]
@@ -374,7 +374,8 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
         for i, center in enumerate(cluster_centers):
             per_cluster_evaluation['cluster'].append(i)
             in_cluster = y_pred == i
-            cluster_inertia = np.sum((X[in_cluster] - center.reshape(1, -1)) ** 2)
+            cluster_inertia = np.sum(
+                (X[in_cluster] - center.reshape(1, -1)) ** 2)
             per_cluster_evaluation['inertia'].append(cluster_inertia)
             n_samples = np.sum(in_cluster)
             per_cluster_evaluation['n_samples'].append(n_samples)
@@ -388,8 +389,10 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
                 if class_ratio > max_class_ratio:
                     max_class_ratio = class_ratio
                     cluster_class = class_
-                per_cluster_evaluation[f'class_{class_}_samples'].append(cluster_class_samples)
-                per_cluster_evaluation[f'class_{class_}_ratio'].append(class_ratio)
+                per_cluster_evaluation[f'class_{class_}_samples'].append(
+                    cluster_class_samples)
+                per_cluster_evaluation[f'class_{class_}_ratio'].append(
+                    class_ratio)
             per_cluster_evaluation['class_'].append(cluster_class)
             del in_cluster
 
@@ -397,7 +400,8 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
 
         cluster_classification = per_cluster_evaluation['class_'].to_dict()
 
-        y_pred_classes = np.array([cluster_classification[i] for i in y_pred], dtype=np.uint8)
+        y_pred_classes = np.array([cluster_classification[i]
+                                  for i in y_pred], dtype=np.uint8)
         evaluation['accuracy'] = accuracy_score(y_true, y_pred_classes)
         for class_ in class_count_dict.keys():
             class_y_true = (y_true == class_).astype(np.uint8)
@@ -408,8 +412,10 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
             evaluation['fp'][class_key] = int(cm[0, 1])
             evaluation['tn'][class_key] = int(cm[0, 0])
             evaluation['fn'][class_key] = int(cm[1, 0])
-            evaluation['tpr'][class_key] = cm[1, 1] / (cm[1, 1] + cm[1, 0]) if (cm[1, 1] + cm[1, 0]) > 0 else -1
-            evaluation['fpr'][class_key] = cm[0, 1] / (cm[0, 1] + cm[0, 0]) if (cm[0, 1] + cm[0, 0]) > 0 else -1
+            evaluation['tpr'][class_key] = cm[1, 1] / \
+                (cm[1, 1] + cm[1, 0]) if (cm[1, 1] + cm[1, 0]) > 0 else -1
+            evaluation['fpr'][class_key] = cm[0, 1] / \
+                (cm[0, 1] + cm[0, 0]) if (cm[0, 1] + cm[0, 0]) > 0 else -1
             del cm, class_y_true, class_y_pred_classes
 
         return evaluation, per_cluster_evaluation
@@ -541,7 +547,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
         mlflow.log_metric("exec_duration", end_start - exec_start)
 
 
-app = typer.Typer(
+app = cyclopts.App(
     name='kmeans',
     help='Utility for training KMeans models on electorn classification data.'
 )
@@ -560,7 +566,7 @@ def create_training(
     init: InitType = KMeansTrainingJob.model_fields['init'].default,
     n_init: Annotated[
         str,
-        typer.Option(
+        cyclopts.Parameter(
             help=N_INIT_TYPE_HELP
         )
     ] = KMeansTrainingJob.model_fields['n_init'].default,
@@ -644,7 +650,7 @@ ClustersType = Annotated[
         default='lloyd',
         description=CLUSTERS_TYPE_HELP
     ),
-    typer.Option(
+    cyclopts.Parameter(
         help=CLUSTERS_TYPE_HELP
     )
 ]
@@ -760,7 +766,8 @@ class BestClusterNumberSearch(jobs.MLFlowLoggedJob):
 
         best_job_id = run.data.params.get('best_job_id', None)
         if best_job_id is not None:
-            kwargs['best_job_id'] = KMeansTrainingJob.from_mlflow_run_id(best_job_id)
+            kwargs['best_job_id'] = KMeansTrainingJob.from_mlflow_run_id(
+                best_job_id)
         return cls(**kwargs)
 
     def log_metrics(self, tmp_dir: Path):
@@ -824,20 +831,28 @@ class BestClusterNumberSearch(jobs.MLFlowLoggedJob):
             for key, value in flatten_dict(child.metrics).items():
                 metrics[key].append(value)
 
-        self.children_metrics = pd.DataFrame.from_dict(metrics).sort_values(by='n_clusters').reset_index(drop=True)
-        self.children_metrics['train.inertia_diff'] = self.children_metrics['train.inertia'].diff()
-        self.children_metrics['train.variance_diff'] = self.children_metrics['train.variance'].diff()
+        self.children_metrics = pd.DataFrame.from_dict(
+            metrics).sort_values(by='n_clusters').reset_index(drop=True)
+        self.children_metrics['train.inertia_diff'] = self.children_metrics['train.inertia'].diff(
+        )
+        self.children_metrics['train.variance_diff'] = self.children_metrics['train.variance'].diff(
+        )
         if 'val.inertia' in self.children_metrics.columns:
-            self.children_metrics['val.inertia_diff'] = self.children_metrics['val.inertia'].diff()
-            self.children_metrics['val.variance_diff'] = self.children_metrics['val.variance'].diff()
+            self.children_metrics['val.inertia_diff'] = self.children_metrics['val.inertia'].diff(
+            )
+            self.children_metrics['val.variance_diff'] = self.children_metrics['val.variance'].diff(
+            )
         if 'test.inertia' in self.children_metrics.columns:
-            self.children_metrics['test.inertia_diff'] = self.children_metrics['test.inertia'].diff()
-            self.children_metrics['test.variance_diff'] = self.children_metrics['test.variance'].diff()
+            self.children_metrics['test.inertia_diff'] = self.children_metrics['test.inertia'].diff(
+            )
+            self.children_metrics['test.variance_diff'] = self.children_metrics['test.variance'].diff(
+            )
 
         # Fills the missing fill values
         self.children_metrics.fillna(np.inf, inplace=True)
 
-        best_job_row = self.children_metrics.loc[self.children_metrics['train.inertia_diff'].argmin()]
+        best_job_row = self.children_metrics.loc[self.children_metrics['train.inertia_diff'].argmin(
+        )]
         for child in self.children:
             if child.id_ == best_job_row['id']:
                 self.best_job = child
@@ -865,7 +880,7 @@ def create_best_cluster_number_search(
     init: InitType = 'k-means++',
     n_init: Annotated[
         str,
-        typer.Option(
+        cyclopts.Parameter(
             help=N_INIT_TYPE_HELP
         )
     ] = 'auto',
@@ -1050,7 +1065,8 @@ class KFoldKMeansTrainingJob(jobs.MLFlowLoggedJob):
 
         best_search_id = run.data.params.get('best_search_id', None)
         if best_search_id is not None:
-            kwargs['best_search'] = BestClusterNumberSearch.from_mlflow_run_id(best_search_id)
+            kwargs['best_search'] = BestClusterNumberSearch.from_mlflow_run_id(
+                best_search_id)
         return cls(**kwargs)
 
     def log_metrics(self, tmp_dir: Path):
@@ -1086,9 +1102,11 @@ class KFoldKMeansTrainingJob(jobs.MLFlowLoggedJob):
         self.children_metrics = pd.DataFrame.from_dict(metrics_df)
 
         if self.best_metric_mode == 'min':
-            best_search_row = self.children_metrics.loc[self.children_metrics[self.best_metric].argmin()]
+            best_search_row = self.children_metrics.loc[self.children_metrics[self.best_metric].argmin(
+            )]
         else:
-            best_search_row = self.children_metrics.loc[self.children_metrics[self.best_metric].argmax()]
+            best_search_row = self.children_metrics.loc[self.children_metrics[self.best_metric].argmax(
+            )]
 
         for child in self.children:
             if child.id_ == best_search_row['id']:
@@ -1122,7 +1140,7 @@ def create_kfold(
     init: InitType = KFoldKMeansTrainingJob.model_fields['init'].default,
     n_init: Annotated[
         str,
-        typer.Option(
+        cyclopts.Parameter(
             help=N_INIT_TYPE_HELP
         )
     ] = KFoldKMeansTrainingJob.model_fields['n_init'].default,
