@@ -1,6 +1,7 @@
 from boosted_lorenzetti.models import kmeans
 from pathlib import Path
 import subprocess
+import logging
 
 from boosted_lorenzetti.constants import N_RINGS
 
@@ -88,7 +89,7 @@ def test_kfold_kmeans(test_dataset_path: Path):
         db_path=test_dataset_path,
         table_name='data',
         feature_cols=ring_cols,
-        best_metric='test.inertia',
+        best_metric='val.inertia',
         best_metric_mode='min',
         n_folds=5,
         clusters=list(range(1, 5)),
@@ -105,23 +106,30 @@ def test_kfold_kmeans(test_dataset_path: Path):
     kmeans.KFoldKMeansTrainingJob.from_mlflow_run_id(run_id)
 
 
-def test_kfold_kmeans_cli(test_dataset_path: Path):
+def test_kfold_kmeans_cli(test_dataset_path: Path,
+                          repo_path: Path):
     experiment_name = 'test_kfold_kmeans'
 
-    ring_cols = [f'cl_rings[{i+1}]' for i in range(N_RINGS)]
+    ring_cols = ', '.join([f'cl_rings[{i+1}]' for i in range(N_RINGS)])
+    command = ['python',
+               f'{str(repo_path)}/cli.py',
+               'kmeans',
+               'create-kfold',
+               '--db-path', str(test_dataset_path),
+               '--table-name', 'data',
+               '--feature-cols', ring_cols,
+               '--best-metric', 'val.inertia',
+               '--best-metric-mode', 'min',
+               '--n-folds', '5',
+               '--clusters', '1, 2, 3, 4, 5',
+               '--label-col', 'label',
+               '--fold-col', 'fold',
+               '--experiment-name', experiment_name,
+               ]
+    logging.info("Running KFold KMeans via CLI")
+    logging.info(f"Command: {' '.join(command)}")
 
-    subprocess.run(['python',
-                    'cli.py',
-                    'kmeans',
-                    'create-kfold',
-                    '--db-path', str(test_dataset_path),
-                    '--table-name', 'data',
-                    '--feature-cols'] + ring_cols + [
-                    '--best-metric', 'test.inertia',
-                    '--best-metric-mode', 'min',
-                    '--n-folds', '5',
-                    '--clusters', '1', '2', '3', '4', '5',
-                    '--label-col', 'label',
-                    '--fold-col', 'fold',
-                    '--experiment-name', experiment_name,
-                    ])
+    result = subprocess.run(command, capture_output=True, text=True)
+    logging.info("STDOUT: %s", result.stdout)
+    logging.error("STDERR: %s", result.stderr)
+    assert result.returncode == 0, "KFold KMeans CLI command failed"

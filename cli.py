@@ -1,4 +1,4 @@
-import cyclopts
+import typer
 
 from boosted_lorenzetti.dataset.duckdb import app as duckdb_app
 from boosted_lorenzetti.models.kmeans import app as kmeans_app
@@ -12,14 +12,14 @@ from boosted_lorenzetti.utils import set_logger
 set_logger()
 
 
-app = cyclopts.App(
+app = typer.Typer(
     help='CLI utilities for boosted-lorenzetti'
 )
-app.command(duckdb_app)
-app.command(kmeans_app)
-app.command(mlp_app)
-app.command(npz_app)
-app.command(ntuple_app)
+# app.add_typer(duckdb_app)
+app.add_typer(kmeans_app)
+app.add_typer(mlp_app)
+# app.add_typer(npz_app)
+app.add_typer(ntuple_app)
 # app.add_typer(tabcaps_app)
 
 
