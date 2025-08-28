@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import lightning as L
 from typing import Annotated, Any, Set, Tuple, List, Literal, Dict
-import cyclopts
+import typer
 import mlflow
 from pathlib import Path
 from lightning.pytorch.loggers import MLFlowLogger
@@ -406,7 +406,7 @@ class TrainingJob(MLFlowLoggedJob):
         return pd.DataFrame.from_records(data), metric_names
 
 
-app = cyclopts.App(
+app = typer.Typer(
     name='mlp',
     help='Utility for training MLP models on electron classification data.'
 )
@@ -809,7 +809,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
 
 DatasetPathType = Annotated[
     Path,
-    cyclopts.Parameter(
+    typer.Argument(
         help='Path to the dataset file.'
     )
 ]
@@ -820,10 +820,10 @@ DatasetPathType = Annotated[
 )
 def create_kfold(
     dims: types.DimsType,
-    db_path: Annotated[Path, cyclopts.Parameter(
+    db_path: Annotated[Path, typer.Option(
         help='Path to the DuckDB database file.'
     )],
-    table_name: Annotated[str, cyclopts.Parameter(
+    table_name: Annotated[str, typer.Option(
         help='Name of the DuckDB table containing the dataset.'
     )],
     best_metric: types.BestMetricType,

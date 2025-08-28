@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import contextmanager
 import numpy as np
+import typer
 
 from .utils import fullname
 
@@ -32,19 +33,27 @@ IdType = Annotated[
     )
 ]
 
-NAME_TYPE_HELP = "Name of the training job"
+NAME_TYPE_HELP = "Name of the job"
 NameType = Annotated[
     str,
     Field(
         description=NAME_TYPE_HELP
+    ),
+    typer.Option(
+        "--name",
+        help=NAME_TYPE_HELP,
     )
 ]
 
-DESCRIPTION_TYPE_HELP = "Description of the training job"
+DESCRIPTION_TYPE_HELP = "Description of the job"
 DescriptionType = Annotated[
     str,
     Field(
         description=DESCRIPTION_TYPE_HELP
+    ),
+    typer.Option(
+        "--description",
+        help=DESCRIPTION_TYPE_HELP,
     )
 ]
 

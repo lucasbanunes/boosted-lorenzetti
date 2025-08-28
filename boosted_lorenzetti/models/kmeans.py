@@ -10,9 +10,7 @@ from datetime import datetime, timezone
 from mlflow.models import infer_signature
 import numpy as np
 from sklearn.metrics import (
-    silhouette_score,
     calinski_harabasz_score,
-    davies_bouldin_score,
     accuracy_score,
     confusion_matrix
 )
@@ -21,7 +19,7 @@ import logging
 import pickle
 import pandas as pd
 import plotly.express as px
-import cyclopts
+import typer
 
 from ..utils import seed_factory, unflatten_dict, flatten_dict
 from ..dataset.duckdb import DuckDBDataset
@@ -35,7 +33,7 @@ DBPathType = Annotated[
     Field(
         description=DB_PATH_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=DB_PATH_TYPE_HELP
     )
 ]
@@ -46,7 +44,7 @@ TrainQueryType = Annotated[
     Field(
         description=TRAIN_QUERY_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=TRAIN_QUERY_TYPE_HELP
     )
 ]
@@ -57,7 +55,7 @@ ValQueryType = Annotated[
     Field(
         description=VAL_QUERY_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=VAL_QUERY_TYPE_HELP
     )
 ]
@@ -68,7 +66,7 @@ TestQueryType = Annotated[
     Field(
         description=TEST_QUERY_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=TEST_QUERY_TYPE_HELP
     )
 ]
@@ -79,7 +77,7 @@ LabelColsType = Annotated[
     Field(
         description=LABEL_COLS_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=LABEL_COLS_TYPE_HELP
     )
 ]
@@ -90,7 +88,7 @@ NClustersType = Annotated[
     Field(
         description=N_CLUSTERS_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=N_CLUSTERS_TYPE_HELP
     )
 ]
@@ -101,7 +99,7 @@ InitType = Annotated[
     Field(
         description=INIT_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=INIT_TYPE_HELP
     )
 ]
@@ -120,7 +118,7 @@ MaxIterType = Annotated[
     Field(
         description=MAX_ITER_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=MAX_ITER_TYPE_HELP
     )
 ]
@@ -131,7 +129,7 @@ TolType = Annotated[
     Field(
         description=TOL_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=TOL_TYPE_HELP
     )
 ]
@@ -142,7 +140,7 @@ VerboseType = Annotated[
     Field(
         description=VERBOSE_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=VERBOSE_TYPE_HELP
     )
 ]
@@ -154,7 +152,7 @@ RandomStateType = Annotated[
         default_factory=seed_factory,
         description=RANDOM_STATE_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=RANDOM_STATE_TYPE_HELP
     )
 ]
@@ -165,7 +163,7 @@ CopyXType = Annotated[
     Field(
         description=COPY_X_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=COPY_X_TYPE_HELP
     )
 ]
@@ -177,7 +175,7 @@ AlgorithmType = Annotated[
         default='lloyd',
         description=ALGORITHM_TYPE_HELP
     ),
-    cyclopts.Parameter(
+    typer.Option(
         help=ALGORITHM_TYPE_HELP
     )
 ]
@@ -357,12 +355,13 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
             per_cluster_evaluation[f'class_{class_}_samples'] = []
             per_cluster_evaluation[f'class_{class_}_ratio'] = []
 
+        logging.info('Evaluating clustering results.')
         evaluation = {
             'inertia': inertia,
             'variance': inertia/len(X),
-            'silhouette_score': silhouette_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
+            # 'silhouette_score': silhouette_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
             'calinski_harabasz_score': calinski_harabasz_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
-            'davies_bouldin_score': davies_bouldin_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
+            # 'davies_bouldin_score': davies_bouldin_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
             'accuracy': -1,
         }
         dict_keys = [
@@ -371,6 +370,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
         for key in dict_keys:
             evaluation[key] = {}
 
+        logging.info('Per-cluster evaluation.')
         for i, center in enumerate(cluster_centers):
             per_cluster_evaluation['cluster'].append(i)
             in_cluster = y_pred == i
@@ -398,6 +398,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
 
         per_cluster_evaluation = pd.DataFrame.from_dict(per_cluster_evaluation)
 
+        logging.info('Classification evaluation.')
         cluster_classification = per_cluster_evaluation['class_'].to_dict()
 
         y_pred_classes = np.array([cluster_classification[i]
@@ -547,7 +548,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
         mlflow.log_metric("exec_duration", end_start - exec_start)
 
 
-app = cyclopts.App(
+app = typer.Typer(
     name='kmeans',
     help='Utility for training KMeans models on electorn classification data.'
 )
@@ -566,7 +567,7 @@ def create_training(
     init: InitType = KMeansTrainingJob.model_fields['init'].default,
     n_init: Annotated[
         str,
-        cyclopts.Parameter(
+        typer.Option(
             help=N_INIT_TYPE_HELP
         )
     ] = KMeansTrainingJob.model_fields['n_init'].default,
@@ -617,16 +618,26 @@ def create_training(
     return run_id
 
 
+RUN_IDS_OPTION_HELP = "List of run IDs to execute"
+RunIdsOption = Annotated[
+    str,
+    typer.Option(
+        help=RUN_IDS_OPTION_HELP)
+]
+
+
 @app.command(
     help='Run Kmeans Training Job'
 )
 def run_training(
-    run_ids: List[str],
+    run_ids: RunIdsOption,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 ):
     logging.debug(
         f'Tracking URI: {tracking_uri}, Experiment Name: {experiment_name}')
+    if isinstance(run_ids, str):
+        run_ids = [run_id.strip() for run_id in run_ids.split(',')]
 
     if tracking_uri is None or not tracking_uri:
         tracking_uri = mlflow.get_tracking_uri()
@@ -647,10 +658,12 @@ CLUSTERS_TYPE_HELP = "Number of clusters to search"
 ClustersType = Annotated[
     List[int],
     Field(
-        default='lloyd',
         description=CLUSTERS_TYPE_HELP
     ),
-    cyclopts.Parameter(
+]
+CustersOption = Annotated[
+    str,
+    typer.Option(
         help=CLUSTERS_TYPE_HELP
     )
 ]
@@ -873,14 +886,14 @@ class BestClusterNumberSearch(jobs.MLFlowLoggedJob):
 def create_best_cluster_number_search(
     db_path: DBPathType,
     train_query: TrainQueryType,
-    clusters: ClustersType,
+    clusters: CustersOption,
     val_query: ValQueryType = None,
     test_query: TestQueryType = None,
     label_cols: LabelColsType = 'label',
     init: InitType = 'k-means++',
     n_init: Annotated[
         str,
-        cyclopts.Parameter(
+        typer.Option(
             help=N_INIT_TYPE_HELP
         )
     ] = 'auto',
@@ -897,6 +910,9 @@ def create_best_cluster_number_search(
         random_state = seed_factory()
 
     logging.debug('Setting MLFlow tracking URI and experiment name.')
+
+    if isinstance(clusters, str):
+        clusters = [int(c.strip()) for c in clusters.split(',')]
 
     if tracking_uri is None or not tracking_uri:
         tracking_uri = mlflow.get_tracking_uri()
@@ -990,7 +1006,7 @@ class KFoldKMeansTrainingJob(jobs.MLFlowLoggedJob):
     def get_train_query(self, fold: int) -> str:
         return f"SELECT {', '.join(self.feature_cols)}, {self.label_col} FROM {self.table_name} WHERE {self.fold_col} != {fold} AND {self.fold_col} >= 0;"
 
-    def get_test_query(self, fold: int) -> str:
+    def get_val_query(self, fold: int) -> str:
         return f"SELECT {', '.join(self.feature_cols)}, {self.label_col} FROM {self.table_name} WHERE {self.fold_col} = {fold};"
 
     def _to_mlflow(self):
@@ -1011,12 +1027,13 @@ class KFoldKMeansTrainingJob(jobs.MLFlowLoggedJob):
         mlflow.log_param("copy_x", self.copy_x)
         mlflow.log_param("algorithm", self.algorithm)
         for fold in range(self.n_folds):
+            logging.info(f'Creating child job for fold {fold}')
             train_query = self.get_train_query(fold)
-            test_query = self.get_test_query(fold)
+            val_query = self.get_val_query(fold)
             child_job = BestClusterNumberSearch(
                 db_path=self.db_path,
                 train_query=train_query,
-                test_query=test_query,
+                val_query=val_query,
                 label_cols=self.label_col,
                 clusters=self.clusters,
                 init=self.init,
@@ -1124,23 +1141,41 @@ class KFoldKMeansTrainingJob(jobs.MLFlowLoggedJob):
         mlflow.log_metric("exec_duration", end_start - exec_start)
 
 
+FeatureColsOption = Annotated[
+    str,
+    typer.Option(
+        help="Comma separated list of feature columns to use for training."
+    )
+]
+
+
 @app.command(
     help='Create KFold KMeans'
 )
 def create_kfold(
     db_path: DBPathType,
-    table_name: str,
-    feature_cols: List[str],
+    table_name: Annotated[
+        str,
+        typer.Option(
+            help="Name of the table in the DuckDB database that contains the data."
+        )
+    ],
+    feature_cols: FeatureColsOption,
     best_metric: types.BestMetricType,
     best_metric_mode: types.BestMetricModeType,
-    n_folds: int,
-    clusters: ClustersType,
+    n_folds: Annotated[
+        int,
+        typer.Option(
+            help="Number of folds to use for cross-validation."
+        )
+    ],
+    clusters: CustersOption,
     label_col: str | None = KFoldKMeansTrainingJob.model_fields['label_col'].default,
     fold_col: str = KFoldKMeansTrainingJob.model_fields['fold_col'].default,
     init: InitType = KFoldKMeansTrainingJob.model_fields['init'].default,
     n_init: Annotated[
         str,
-        cyclopts.Parameter(
+        typer.Option(
             help=N_INIT_TYPE_HELP
         )
     ] = KFoldKMeansTrainingJob.model_fields['n_init'].default,
@@ -1149,6 +1184,8 @@ def create_kfold(
     verbose: VerboseType = KFoldKMeansTrainingJob.model_fields['verbose'].default,
     copy_x: CopyXType = KFoldKMeansTrainingJob.model_fields['copy_x'].default,
     algorithm: AlgorithmType = KFoldKMeansTrainingJob.model_fields['algorithm'].default,
+    name: jobs.NameType = KFoldKMeansTrainingJob.model_fields['name'].default,
+    description: jobs.DescriptionType = KFoldKMeansTrainingJob.model_fields['description'].default,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 ):
@@ -1158,6 +1195,11 @@ def create_kfold(
         tracking_uri = mlflow.get_tracking_uri()
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
+
+    if isinstance(clusters, str):
+        clusters = [int(c.strip()) for c in clusters.split(',')]
+    if isinstance(feature_cols, str):
+        feature_cols = [col.strip() for col in feature_cols.split(',')]
 
     try:
         n_init = int(n_init)
@@ -1181,6 +1223,8 @@ def create_kfold(
         verbose=verbose,
         copy_x=copy_x,
         algorithm=algorithm,
+        name=name,
+        description=description
     )
 
     run_id = job.to_mlflow()
