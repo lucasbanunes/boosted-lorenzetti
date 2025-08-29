@@ -10,7 +10,10 @@ import mlflow
 import numpy as np
 import pandas as pd
 import polars as pl
-import cyclopts
+import typer
+from sklearn.model_selection import StratifiedKFold
+
+from ..types import seed_factory
 
 
 class DuckDBDataset(L.LightningDataModule):
@@ -441,7 +444,7 @@ def check_table_exists(con, table_name):
     return result
 
 
-app = cyclopts.App(
+app = typer.Typer(
     name='duckdb',
     help='Duckdb database operation utilities')
 
@@ -452,25 +455,25 @@ app = cyclopts.App(
 def add_table_from_parquet(
     files: Annotated[
         List[str],
-        cyclopts.Parameter(
+        typer.Option(
             help='List of parquet file patterns to load. Supports the patterns supported by duckdb read_parquet function'
         )
     ],
     db_path: Annotated[
         Path,
-        cyclopts.Parameter(
+        typer.Option(
             help='Path to the duckdb database file'
         )
     ],
     table_name: Annotated[
         str,
-        cyclopts.Parameter(
+        typer.Option(
             help='Table name in which to save the data'
         )
     ],
     overwrite: Annotated[
         bool,
-        cyclopts.Parameter(
+        typer.Option(
             help='Whether to overwrite the table if it exists'
         )
     ] = False
@@ -497,3 +500,58 @@ def add_table_from_parquet(
                 con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_parquet('{file}')")
             else:
                 con.execute(f"INSERT INTO {table_name} SELECT * FROM read_parquet('{file}')")
+
+
+@app.command(
+    help='Adds Stratified KFold column to the dataset'
+)
+def add_kfold(
+    db_path: Annotated[
+        str, typer.Option(help='Path to the DuckDB database')
+    ],
+    src_table: Annotated[
+        str, typer.Option(help='Name of the table to add the KFold column')
+    ],
+    n_folds: Annotated[
+        int, typer.Option(help='Number of folds for cross-validation')
+    ],
+    shuffle: Annotated[
+        bool, typer.Option(help='Whether to shuffle the data before splitting')
+    ] = True,
+    random_state: Annotated[
+        int | None, typer.Option(help='Random state for shuffling')
+    ] = None,
+    id_col: Annotated[
+        str, typer.Option(help='Name of the ID column')
+    ] = 'id',
+    fold_col: Annotated[
+        str, typer.Option(help='Name of the fold column to add')
+    ] = 'fold',
+    label_col: Annotated[
+        str, typer.Option(help='Name of the label column')
+    ] = 'label',
+):
+    if random_state is None:
+        random_state = seed_factory()
+    with duckdb.connect(db_path) as conn:
+        logging.info('Selecting data from database')
+        label_df = conn.execute(f'SELECT {id_col}, {label_col} FROM {src_table};').pl()
+        new_col = np.full(len(label_df), -1, dtype=np.int8)
+        kf = StratifiedKFold(n_splits=n_folds, shuffle=shuffle, random_state=random_state)
+        x_placeholder = np.full(len(label_df), 0, dtype=np.int8)
+        logging.info('Creating KFold splits')
+        for fold, (_, val_idx) in enumerate(kf.split(x_placeholder, label_df[label_col].to_numpy())):
+            new_col[val_idx] = fold
+        label_df = label_df.with_columns(pl.Series(fold_col, new_col))
+        del new_col, x_placeholder
+        label_df.drop_in_place(label_col)
+        logging.info('Writing data to database')
+        conn.execute(f"""
+            BEGIN TRANSACTION;
+            ALTER TABLE {src_table} ADD COLUMN {fold_col} INT8;
+            UPDATE {src_table}
+            SET {fold_col} = label_df.{fold_col}
+            FROM label_df
+            WHERE {src_table}.{id_col} = label_df.{id_col};
+            COMMIT;
+        """)

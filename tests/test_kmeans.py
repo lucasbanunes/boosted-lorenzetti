@@ -1,4 +1,4 @@
-from boosted_lorenzetti.models import kmeans
+from boosted_lorenzetti import kmeans
 from pathlib import Path
 import subprocess
 import logging
@@ -15,7 +15,7 @@ def test_full_training(test_dataset_path: Path):
     train_query = f"SELECT {query_cols_str} FROM data WHERE fold != 0;"
     test_query = f"SELECT {query_cols_str} FROM data WHERE fold = 0;"
 
-    run_id = kmeans.create_training(
+    run_id = kmeans.cli.create_training(
         db_path=test_dataset_path,
         train_query=train_query,
         test_query=test_query,
@@ -24,12 +24,12 @@ def test_full_training(test_dataset_path: Path):
         n_clusters=2
     )
 
-    kmeans.run_training(
+    kmeans.cli.run_training(
         run_ids=[run_id],
         experiment_name=experiment_name,
     )
 
-    kmeans.KMeansTrainingJob.from_mlflow_run_id(run_id)
+    kmeans.jobs.KMeansTrainingJob.from_mlflow_run_id(run_id)
 
 
 def test_full_training_cli(test_dataset_path: Path,
@@ -63,7 +63,7 @@ def test_best_cluster_number_search(test_dataset_path: Path):
     train_query = f"SELECT {query_cols_str} FROM data WHERE fold != 0;"
     test_query = f"SELECT {query_cols_str} FROM data WHERE fold = 0;"
 
-    run_id = kmeans.create_best_cluster_number_search(
+    run_id = kmeans.cli.create_best_cluster_number_search(
         db_path=test_dataset_path,
         train_query=train_query,
         test_query=test_query,
@@ -72,12 +72,12 @@ def test_best_cluster_number_search(test_dataset_path: Path):
         clusters=[1, 2, 3, 4, 5]
     )
 
-    kmeans.run_best_cluster_number_search(
+    kmeans.cli.run_best_cluster_number_search(
         run_ids=[run_id],
         experiment_name=experiment_name
     )
 
-    kmeans.BestClusterNumberSearch.from_mlflow_run_id(run_id)
+    kmeans.jobs.BestClusterNumberSearch.from_mlflow_run_id(run_id)
 
 
 def test_kfold_kmeans(test_dataset_path: Path):
@@ -85,7 +85,7 @@ def test_kfold_kmeans(test_dataset_path: Path):
 
     ring_cols = [f'cl_rings[{i+1}]' for i in range(N_RINGS)]
 
-    run_id = kmeans.create_kfold(
+    run_id = kmeans.cli.create_kfold(
         db_path=test_dataset_path,
         table_name='data',
         feature_cols=ring_cols,
@@ -98,12 +98,12 @@ def test_kfold_kmeans(test_dataset_path: Path):
         experiment_name=experiment_name,
     )
 
-    kmeans.run_kfold(
+    kmeans.cli.run_kfold(
         run_ids=[run_id],
         experiment_name=experiment_name
     )
 
-    kmeans.KFoldKMeansTrainingJob.from_mlflow_run_id(run_id)
+    kmeans.jobs.KFoldKMeansTrainingJob.from_mlflow_run_id(run_id)
 
 
 def test_kfold_kmeans_cli(test_dataset_path: Path,

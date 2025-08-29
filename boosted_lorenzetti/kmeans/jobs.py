@@ -4,7 +4,6 @@ from typing import Annotated, Any, ClassVar, Dict, Literal, List, Tuple
 from pathlib import Path
 import mlflow
 import mlflow.entities
-from sklearn.cluster import KMeans
 from pydantic import Field, ConfigDict, computed_field
 from datetime import datetime, timezone
 from mlflow.models import infer_signature
@@ -26,6 +25,7 @@ from ..dataset.duckdb import DuckDBDataset
 from .. import mlflow as boosted_mlflow
 from .. import types
 from .. import jobs
+from .models import CustomMetricKMeans
 
 DB_PATH_TYPE_HELP = "Path to the database"
 DBPathType = Annotated[
@@ -247,7 +247,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
     random_state: RandomStateType
     copy_x: CopyXType = True
     algorithm: AlgorithmType = 'lloyd'
-    model: KMeans | None = None
+    model: CustomMetricKMeans | None = None
     cluster_centers: Dict[str, List[float]] = {}
     metrics: Dict[str, Any] = {}
     metrics_per_cluster: pd.DataFrame | None = None
@@ -460,7 +460,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
         mlflow.log_metric('exec_start', exec_start)
         self.datamodule.log_to_mlflow()
 
-        self.model = KMeans(
+        self.model = CustomMetricKMeans(
             n_clusters=self.n_clusters,
             init=self.init,
             n_init=self.n_init,
@@ -548,124 +548,12 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
         mlflow.log_metric("exec_duration", end_start - exec_start)
 
 
-app = typer.Typer(
-    name='kmeans',
-    help='Utility for training KMeans models on electorn classification data.'
-)
-
-
-@app.command(
-    help='Create a training run for a KMeans model'
-)
-def create_training(
-    db_path: DBPathType,
-    train_query: TrainQueryType,
-    n_clusters: NClustersType,
-    val_query: ValQueryType = KMeansTrainingJob.model_fields['val_query'].default,
-    test_query: TestQueryType = KMeansTrainingJob.model_fields['test_query'].default,
-    label_cols: LabelColsType = KMeansTrainingJob.model_fields['label_cols'].default,
-    init: InitType = KMeansTrainingJob.model_fields['init'].default,
-    n_init: Annotated[
-        str,
-        typer.Option(
-            help=N_INIT_TYPE_HELP
-        )
-    ] = KMeansTrainingJob.model_fields['n_init'].default,
-    max_iter: MaxIterType = KMeansTrainingJob.model_fields['max_iter'].default,
-    tol: TolType = KMeansTrainingJob.model_fields['tol'].default,
-    verbose: VerboseType = KMeansTrainingJob.model_fields['verbose'].default,
-    copy_x: CopyXType = True,
-    algorithm: AlgorithmType = 'lloyd',
-    random_state: RandomStateType = None,
-    tracking_uri: types.TrackingUriType = None,
-    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
-):
-    if random_state is None:
-        random_state = seed_factory()
-
-    logging.debug('Setting MLFlow tracking URI and experiment name.')
-
-    if tracking_uri is None or not tracking_uri:
-        tracking_uri = mlflow.get_tracking_uri()
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(experiment_name)
-
-    try:
-        n_init = int(n_init)
-    except Exception:
-        pass
-
-    job = KMeansTrainingJob(
-        db_path=db_path,
-        train_query=train_query,
-        val_query=val_query,
-        test_query=test_query,
-        label_cols=label_cols,
-        n_clusters=n_clusters,
-        init=init,
-        n_init=n_init,
-        max_iter=max_iter,
-        tol=tol,
-        verbose=verbose,
-        random_state=random_state,
-        copy_x=copy_x,
-        algorithm=algorithm
-    )
-
-    run_id = job.to_mlflow()
-    logging.info(f'Created training job with run ID: {run_id}')
-
-    return run_id
-
-
-RUN_IDS_OPTION_HELP = "List of run IDs to execute"
-RunIdsOption = Annotated[
-    str,
-    typer.Option(
-        help=RUN_IDS_OPTION_HELP)
-]
-
-
-@app.command(
-    help='Run Kmeans Training Job'
-)
-def run_training(
-    run_ids: RunIdsOption,
-    tracking_uri: types.TrackingUriType = None,
-    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
-):
-    logging.debug(
-        f'Tracking URI: {tracking_uri}, Experiment Name: {experiment_name}')
-    if isinstance(run_ids, str):
-        run_ids = [run_id.strip() for run_id in run_ids.split(',')]
-
-    if tracking_uri is None or not tracking_uri:
-        tracking_uri = mlflow.get_tracking_uri()
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(experiment_name)
-
-    if isinstance(run_ids, str):
-        run_ids = [run_ids]
-
-    for run_id in run_ids:
-        logging.info(f'Running training job with run ID: {run_id}')
-        job = KMeansTrainingJob.from_mlflow_run_id(run_id)
-        job.execute(experiment_name=experiment_name,
-                    tracking_uri=tracking_uri)
-
-
 CLUSTERS_TYPE_HELP = "Number of clusters to search"
 ClustersType = Annotated[
     List[int],
     Field(
         description=CLUSTERS_TYPE_HELP
     ),
-]
-CustersOption = Annotated[
-    str,
-    typer.Option(
-        help=CLUSTERS_TYPE_HELP
-    )
 ]
 
 
@@ -880,101 +768,6 @@ class BestClusterNumberSearch(jobs.MLFlowLoggedJob):
         mlflow.log_metric("exec_duration", end_start - exec_start)
 
 
-@app.command(
-    help='Creates a search for the best cluster number based on the max inertia diference'
-)
-def create_best_cluster_number_search(
-    db_path: DBPathType,
-    train_query: TrainQueryType,
-    clusters: CustersOption,
-    val_query: ValQueryType = None,
-    test_query: TestQueryType = None,
-    label_cols: LabelColsType = 'label',
-    init: InitType = 'k-means++',
-    n_init: Annotated[
-        str,
-        typer.Option(
-            help=N_INIT_TYPE_HELP
-        )
-    ] = 'auto',
-    max_iter: MaxIterType = 300,
-    tol: TolType = 1e-4,
-    verbose: VerboseType = 0,
-    random_state: RandomStateType = None,
-    copy_x: CopyXType = True,
-    algorithm: AlgorithmType = 'lloyd',
-    tracking_uri: types.TrackingUriType = None,
-    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
-):
-    if random_state is None:
-        random_state = seed_factory()
-
-    logging.debug('Setting MLFlow tracking URI and experiment name.')
-
-    if isinstance(clusters, str):
-        clusters = [int(c.strip()) for c in clusters.split(',')]
-
-    if tracking_uri is None or not tracking_uri:
-        tracking_uri = mlflow.get_tracking_uri()
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(experiment_name)
-
-    try:
-        n_init = int(n_init)
-    except Exception:
-        pass
-
-    job = BestClusterNumberSearch(
-        db_path=db_path,
-        train_query=train_query,
-        val_query=val_query,
-        test_query=test_query,
-        label_cols=label_cols,
-        clusters=clusters,
-        init=init,
-        n_init=n_init,
-        max_iter=max_iter,
-        tol=tol,
-        verbose=verbose,
-        random_state=random_state,
-        copy_x=copy_x,
-        algorithm=algorithm
-    )
-
-    run_id = job.to_mlflow()
-    logging.info(f'Created training job with run ID: {run_id}')
-
-    return run_id
-
-
-@app.command(
-    help='Runs a search for the best cluster number based on the max inertia difference'
-)
-def run_best_cluster_number_search(
-    run_ids: List[str],
-    tracking_uri: types.TrackingUriType = None,
-    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
-):
-    logging.debug(
-        f'Tracking URI: {tracking_uri}, Experiment Name: {experiment_name}')
-
-    logging.debug('Setting MLFlow tracking URI and experiment name.')
-
-    if tracking_uri is None or not tracking_uri:
-        tracking_uri = mlflow.get_tracking_uri()
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(experiment_name)
-
-    if isinstance(run_ids, str):
-        run_ids = [run_ids]
-
-    for run_id in run_ids:
-        logging.info(f'Running training job with run ID: {run_id}')
-        job = BestClusterNumberSearch.from_mlflow_run_id(run_id)
-        job.execute(experiment_name=experiment_name,
-                    tracking_uri=tracking_uri)
-
-
 class KFoldKMeansTrainingJob(jobs.MLFlowLoggedJob):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -1139,123 +932,3 @@ class KFoldKMeansTrainingJob(jobs.MLFlowLoggedJob):
         end_start = datetime.now(timezone.utc).timestamp()
         mlflow.log_metric('exec_end', end_start)
         mlflow.log_metric("exec_duration", end_start - exec_start)
-
-
-FeatureColsOption = Annotated[
-    str,
-    typer.Option(
-        help="Comma separated list of feature columns to use for training."
-    )
-]
-
-
-@app.command(
-    help='Create KFold KMeans'
-)
-def create_kfold(
-    db_path: DBPathType,
-    table_name: Annotated[
-        str,
-        typer.Option(
-            help="Name of the table in the DuckDB database that contains the data."
-        )
-    ],
-    feature_cols: FeatureColsOption,
-    best_metric: types.BestMetricType,
-    best_metric_mode: types.BestMetricModeType,
-    n_folds: Annotated[
-        int,
-        typer.Option(
-            help="Number of folds to use for cross-validation."
-        )
-    ],
-    clusters: CustersOption,
-    label_col: str | None = KFoldKMeansTrainingJob.model_fields['label_col'].default,
-    fold_col: str = KFoldKMeansTrainingJob.model_fields['fold_col'].default,
-    init: InitType = KFoldKMeansTrainingJob.model_fields['init'].default,
-    n_init: Annotated[
-        str,
-        typer.Option(
-            help=N_INIT_TYPE_HELP
-        )
-    ] = KFoldKMeansTrainingJob.model_fields['n_init'].default,
-    max_iter: MaxIterType = KFoldKMeansTrainingJob.model_fields['max_iter'].default,
-    tol: TolType = KFoldKMeansTrainingJob.model_fields['tol'].default,
-    verbose: VerboseType = KFoldKMeansTrainingJob.model_fields['verbose'].default,
-    copy_x: CopyXType = KFoldKMeansTrainingJob.model_fields['copy_x'].default,
-    algorithm: AlgorithmType = KFoldKMeansTrainingJob.model_fields['algorithm'].default,
-    name: jobs.NameType = KFoldKMeansTrainingJob.model_fields['name'].default,
-    description: jobs.DescriptionType = KFoldKMeansTrainingJob.model_fields['description'].default,
-    tracking_uri: types.TrackingUriType = None,
-    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
-):
-    logging.debug('Setting MLFlow tracking URI and experiment name.')
-
-    if tracking_uri is None or not tracking_uri:
-        tracking_uri = mlflow.get_tracking_uri()
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(experiment_name)
-
-    if isinstance(clusters, str):
-        clusters = [int(c.strip()) for c in clusters.split(',')]
-    if isinstance(feature_cols, str):
-        feature_cols = [col.strip() for col in feature_cols.split(',')]
-
-    try:
-        n_init = int(n_init)
-    except Exception:
-        pass
-
-    job = KFoldKMeansTrainingJob(
-        db_path=db_path,
-        table_name=table_name,
-        feature_cols=feature_cols,
-        best_metric=best_metric,
-        best_metric_mode=best_metric_mode,
-        n_folds=n_folds,
-        clusters=clusters,
-        label_col=label_col,
-        fold_col=fold_col,
-        init=init,
-        n_init=n_init,
-        max_iter=max_iter,
-        tol=tol,
-        verbose=verbose,
-        copy_x=copy_x,
-        algorithm=algorithm,
-        name=name,
-        description=description
-    )
-
-    run_id = job.to_mlflow()
-    logging.info(f'Created training job with run ID: {run_id}')
-
-    return run_id
-
-
-@app.command(
-    help='Runs KFold KMeans'
-)
-def run_kfold(
-    run_ids: List[str],
-    tracking_uri: types.TrackingUriType = None,
-    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
-):
-    logging.debug(
-        f'Tracking URI: {tracking_uri}, Experiment Name: {experiment_name}')
-
-    logging.debug('Setting MLFlow tracking URI and experiment name.')
-
-    if tracking_uri is None or not tracking_uri:
-        tracking_uri = mlflow.get_tracking_uri()
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(experiment_name)
-
-    if isinstance(run_ids, str):
-        run_ids = [run_ids]
-
-    for run_id in run_ids:
-        logging.info(f'Running training job with run ID: {run_id}')
-        job = KFoldKMeansTrainingJob.from_mlflow_run_id(run_id)
-        job.execute(experiment_name=experiment_name,
-                    tracking_uri=tracking_uri)
