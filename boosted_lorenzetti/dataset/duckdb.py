@@ -530,12 +530,18 @@ def add_kfold(
     label_col: Annotated[
         str, typer.Option(help='Name of the label column')
     ] = 'label',
+    filter_cond: Annotated[
+        str | None, typer.Option(help='Optional SQL condition to filter the data before splitting')
+    ] = None
 ):
     if random_state is None:
         random_state = seed_factory()
     with duckdb.connect(db_path) as conn:
         logging.info('Selecting data from database')
-        label_df = conn.execute(f'SELECT {id_col}, {label_col} FROM {src_table};').pl()
+        relation = conn.from_query(f'SELECT {id_col}, {label_col} FROM {src_table};')
+        if filter_cond:
+            relation = relation.filter(filter_cond)
+        label_df = relation.pl()
         new_col = np.full(len(label_df), -1, dtype=np.int8)
         kf = StratifiedKFold(n_splits=n_folds, shuffle=shuffle, random_state=random_state)
         x_placeholder = np.full(len(label_df), 0, dtype=np.int8)
@@ -548,7 +554,7 @@ def add_kfold(
         logging.info('Writing data to database')
         conn.execute(f"""
             BEGIN TRANSACTION;
-            ALTER TABLE {src_table} ADD COLUMN {fold_col} INT8;
+            ALTER TABLE {src_table} ADD COLUMN {fold_col} TINYINT DEFAULT -1;
             UPDATE {src_table}
             SET {fold_col} = label_df.{fold_col}
             FROM label_df

@@ -21,7 +21,7 @@ def test_full_training(test_dataset_path: Path):
         test_query=test_query,
         label_cols='label',
         experiment_name=experiment_name,
-        n_clusters=2
+        n_clusters=4
     )
 
     kmeans.cli.run_training(
@@ -69,7 +69,7 @@ def test_best_cluster_number_search(test_dataset_path: Path):
         test_query=test_query,
         label_cols='label',
         experiment_name=experiment_name,
-        clusters=[1, 2, 3, 4, 5]
+        clusters=list(range(1, 21))
     )
 
     kmeans.cli.run_best_cluster_number_search(

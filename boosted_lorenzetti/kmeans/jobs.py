@@ -18,14 +18,21 @@ import logging
 import pickle
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import typer
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA
+# from sklearn_extra.cluster import KMedoids
 
 from ..utils import seed_factory, unflatten_dict, flatten_dict
 from ..dataset.duckdb import DuckDBDataset
 from .. import mlflow as boosted_mlflow
 from .. import types
 from .. import jobs
-from .models import CustomMetricKMeans
+# from .models import CustomMetricKMeans
 
 DB_PATH_TYPE_HELP = "Path to the database"
 DBPathType = Annotated[
@@ -247,7 +254,9 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
     random_state: RandomStateType
     copy_x: CopyXType = True
     algorithm: AlgorithmType = 'lloyd'
-    model: CustomMetricKMeans | None = None
+    n_components: int | None = None
+
+    model: Pipeline | KMeans | None = None
     cluster_centers: Dict[str, List[float]] = {}
     metrics: Dict[str, Any] = {}
     metrics_per_cluster: pd.DataFrame | None = None
@@ -442,7 +451,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
         cluster_centers = {
             i: cluster_center.tolist()
             for i, cluster_center in enumerate(
-                self.model.cluster_centers_
+                self.model['kmeans'].cluster_centers_
             )
         }
         cluster_centers_filepath = tmp_dir / self.CLUSTER_CENTERS_ARTIFACT_PATH
@@ -460,7 +469,69 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
         mlflow.log_metric('exec_start', exec_start)
         self.datamodule.log_to_mlflow()
 
-        self.model = CustomMetricKMeans(
+        train_X, train_y = self.datamodule.train_df()
+        train_X = train_X.to_numpy()
+        train_y = train_y.to_numpy()
+        logging.info('Fitting Kmeans')
+
+        max_variance_pct = 0.99
+
+        pca_pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('pca', PCA(whiten=True))
+        ])
+        pca_pipeline.fit(train_X)
+
+        # variance_ratio_order = np.argsort(pca_pipeline['pca'].explained_variance_ratio_)
+        pca_pipeline_df = {
+            'component': np.arange(train_X.shape[1]),
+            'variance_ratio': pca_pipeline['pca'].explained_variance_ratio_
+        }
+        pca_pipeline_df['cum_variance'] = np.cumsum(
+            pca_pipeline_df['variance_ratio'])
+
+        pca_pipeline_df = pd.DataFrame.from_dict(pca_pipeline_df)
+        for i, accumulated in enumerate(pca_pipeline_df['cum_variance']):
+            if accumulated > max_variance_pct:
+                n_components = i + 1
+                break
+        else:
+            n_components = pca_pipeline_df.shape[0]
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(
+            go.Scatter(
+                x=pca_pipeline_df['component'],
+                y=pca_pipeline_df['cum_variance'],
+                name="Accumulated",
+                yaxis="Accumulated"),
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=pca_pipeline_df['component'],
+                y=pca_pipeline_df['variance_ratio'],
+                name="Contribution",
+                yaxis="Contribution"),
+            secondary_y=True,
+        )
+        fig.update_layout(
+            title='Contribution of PCA componentes to variance',
+            xaxis_title='Components',
+            legend=dict(
+                title_text='Variable'
+            )
+        )
+        fig.add_vline(x=n_components,
+                      line_dash="dash",
+                      line_color="black",
+                      annotation_text=f'{100*max_variance_pct:.1f}%',
+                      annotation_position="top left")
+        mlflow.log_figure(fig, 'pca.html')
+
+        scaler = StandardScaler()
+        pca = PCA(n_components=n_components, whiten=True)
+        kmeans = KMeans(
             n_clusters=self.n_clusters,
             init=self.init,
             n_init=self.n_init,
@@ -471,18 +542,23 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
             copy_x=self.copy_x,
             algorithm=self.algorithm
         )
+        self.model = Pipeline([
+            ('scaler', scaler),
+            ('pca', pca),
+            ('kmeans', kmeans)
+        ])
 
-        train_X, train_y = self.datamodule.train_df()
-        train_X = train_X.to_numpy()
-        train_y = train_y.to_numpy()
-        logging.info('Fitting Kmeans')
         self.model.fit(train_X)
         self.log_cluster_centers(tmp_dir)
+        pca_transformer = Pipeline([
+            ('scaler', scaler),
+            ('pca', pca),
+        ])
 
         logging.info('Evaluating on training data')
         train_y_pred = self.model.predict(train_X)
         train_evaluation, train_per_cluster_evaluation = self.evaluate(
-            train_X, train_y_pred, train_y, self.model.cluster_centers_, self.model.inertia_)
+            pca_transformer.transform(train_X), train_y_pred, train_y, self.model['kmeans'].cluster_centers_, self.model['kmeans'].inertia_)
         del train_X, train_y, train_y_pred
         train_per_cluster_evaluation.rename(
             mapper=lambda col: f'train.{col}',
@@ -506,7 +582,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
             val_y_pred = self.model.predict(val_X)
 
             val_evaluation, val_per_cluster_evaluation = self.evaluate(
-                val_X, val_y_pred, val_y, self.model.cluster_centers_, self.model.inertia_)
+                pca_transformer.transform(val_X), val_y_pred, val_y, self.model['kmeans'].cluster_centers_, self.model['kmeans'].inertia_)
             del val_X, val_y_pred, val_y
             val_per_cluster_evaluation.rename(
                 mapper=lambda col: f'val.{col}',
@@ -527,7 +603,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
             test_y_pred = self.model.predict(test_X)
 
             test_evaluation, test_per_cluster_evaluation = self.evaluate(
-                test_X, test_y_pred, test_y, self.model.cluster_centers_, self.model.inertia_)
+                pca_transformer.transform(test_X), test_y_pred, test_y, self.model['kmeans'].cluster_centers_, self.model['kmeans'].inertia_)
             del test_X, test_y_pred, test_y
             test_per_cluster_evaluation.rename(
                 mapper=lambda col: f'test.{col}',
