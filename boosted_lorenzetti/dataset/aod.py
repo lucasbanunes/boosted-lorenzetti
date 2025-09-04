@@ -578,10 +578,18 @@ def to_parquet(
 @app.command(
     help='Converts AOD root files to duckdb'
 )
-def to_duckdb(input_file: List[str],
-              output_file: str,
-              ttree_name: str = 'CollectionTree',
-              batch_size: int = -1) -> None:
+def to_duckdb(
+    input_file: Annotated[
+        List[str],
+        typer.Option(help='Path to the input AOD file(s).')
+    ],
+    output_file: Annotated[
+        str,
+        typer.Option(help='Path to the output duckdb file.')
+    ],
+    ttree_name: str = 'CollectionTree',
+    batch_size: int = -1
+) -> None:
     """
     Convert AOD root files to a duckdb database.
 
@@ -637,7 +645,8 @@ def to_duckdb(input_file: List[str],
                 cluster_id_counter += 1
 
             if batch_samples >= batch_size:
-                logging.info(f'Inserting batch {batch_counter} with {len(events["id"])} events')
+                logging.info(
+                    f'Inserting batch {batch_counter} with {len(events["id"])} events')
                 write_batch_to_duck_db(conn, events, clusters)
                 events = defaultdict(list)
                 clusters = defaultdict(list)
