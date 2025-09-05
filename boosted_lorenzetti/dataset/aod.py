@@ -1,7 +1,7 @@
 import pyarrow as pa
 import numpy as np
 import typer
-from typing import Iterable, List, Any, Dict, Annotated, Generator
+from typing import Iterable, List, Any, Dict, Annotated
 from pathlib import Path
 import ROOT
 from collections import defaultdict
@@ -187,6 +187,18 @@ CREATE TABLE events (
 );
 """
 
+CREATE_SEEDS_TABLE_QUERY = """
+CREATE TABLE seeds (
+    id BIGINT PRIMARY KEY DEFAULT 0,
+    event_id BIGINT REFERENCES events(id),
+    e FLOAT,
+    et FLOAT,
+    eta FLOAT,
+    sid INTEGER,
+    phi FLOAT
+);
+"""
+
 CREATE_CLUSTERS_TABLE_QUERY = """
 CREATE TABLE clusters (
     id BIGINT PRIMARY KEY DEFAULT 0,
@@ -226,7 +238,7 @@ CREATE TABLE clusters (
     rphi FLOAT,
     secondLambda FLOAT,
     secondR FLOAT,
-    seed_link INTEGER,
+    seed_id BIGINT REFERENCES seeds(id),
     weta2 FLOAT,
     rings FLOAT[]
 );
@@ -235,8 +247,8 @@ CREATE TABLE clusters (
 
 CREATE_CALO_CELLS_TABLE_QUERY = """
 CREATE TABLE calo_cells (
-    id INTEGER PRIMARY KEY DEFAULT 0,
-    cluster_id BIGINT REFERENCES clusters(id),
+    id BIGINT PRIMARY KEY DEFAULT 0,
+    descriptor_id BIGINT REFERENCES calo_descriptor_cells(id),
     deta FLOAT,
     dphi FLOAT,
     e FLOAT,
@@ -244,6 +256,13 @@ CREATE TABLE calo_cells (
     eta FLOAT,
     phi FLOAT,
     tau FLOAT,
+);
+"""
+
+CREATE_CALO_DESCRIPTOR_CELLS_TABLE_QUERY = """
+CREATE TABLE calo_descriptor_cells (
+    id BIGINT PRIMARY KEY DEFAULT 0,
+    cluster_id BIGINT REFERENCES clusters(id),
     bc_duration FLOAT,
     bcid_end INTEGER,
     bcid_start INTEGER,
@@ -276,22 +295,11 @@ CREATE TABLE electrons (
 );
 """
 
-CREATE_SEEDS_TABLE_QUERY = """
-CREATE TABLE seeds (
-    id BIGINT PRIMARY KEY DEFAULT 0,
-    event_id BIGINT REFERENCES events(id),
-    e FLOAT,
-    et FLOAT,
-    eta FLOAT,
-    id INTEGER,
-    phi FLOAT
-);
-"""
-
 CREATE_TRUTH_PARTICLES_TABLE_QUERY = """
 CREATE TABLE truth_particles (
     id BIGINT PRIMARY KEY DEFAULT 0,
     event_id BIGINT REFERENCES events(id),
+    seed_id BIGINT REFERENCES seeds(id),
     e FLOAT,
     et FLOAT,
     eta FLOAT,
@@ -300,7 +308,6 @@ CREATE TABLE truth_particles (
     px FLOAT,
     py FLOAT,
     pz FLOAT,
-    seedid INTEGER,
     vx FLOAT,
     vy FLOAT,
     vz FLOAT
@@ -309,6 +316,19 @@ CREATE TABLE truth_particles (
 
 
 def EventInfoContainer_Events_as_python(data):
+    """
+    Convert EventInfoContainer_Events data to Python dictionary format.
+
+    Parameters
+    ----------
+    data : Iterable
+        Raw event info data from ROOT file.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Converted event info data in Python dictionary format.
+    """
     new_data = []
     for d in data:
         new_data.append({
@@ -319,6 +339,19 @@ def EventInfoContainer_Events_as_python(data):
 
 
 def CaloCellContainer_Cells_as_python(data):
+    """
+    Convert CaloCellContainer_Cells data to Python dictionary format.
+
+    Parameters
+    ----------
+    data : Iterable
+        Raw calorimeter cell data from ROOT file.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Converted calorimeter cell data in Python dictionary format.
+    """
     new_data = []
     for d in data:
         new_data.append({
@@ -334,6 +367,19 @@ def CaloCellContainer_Cells_as_python(data):
 
 
 def CaloClusterContainer_Clusters_as_python(data):
+    """
+    Convert CaloClusterContainer_Clusters data to Python dictionary format.
+
+    Parameters
+    ----------
+    data : Iterable
+        Raw calorimeter cluster data from ROOT file.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Converted calorimeter cluster data in Python dictionary format.
+    """
     new_data = []
     for d in data:
         new_data.append({
@@ -373,13 +419,25 @@ def CaloClusterContainer_Clusters_as_python(data):
             'rphi': d.rphi,
             'secondLambda': d.secondLambda,
             'secondR': d.secondR,
-            # seed_link is an int32, but it is a list in the schema
             'seed_link': d.seed_link,
             'weta2': d.weta2})
     return new_data
 
 
 def CaloDetDescriptorContainer_Cells_as_python(data):
+    """
+    Convert CaloDetDescriptorContainer_Cells data to Python dictionary format.
+
+    Parameters
+    ----------
+    data : Iterable
+        Raw calorimeter detector descriptor cell data from ROOT file.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Converted calorimeter detector descriptor cell data in Python dictionary format.
+    """
     new_data = []
     for d in data:
         new_data.append({
@@ -404,6 +462,19 @@ def CaloDetDescriptorContainer_Cells_as_python(data):
 
 
 def CaloRingsContainer_Rings_as_python(data):
+    """
+    Convert CaloRingsContainer_Rings data to Python dictionary format.
+
+    Parameters
+    ----------
+    data : Iterable
+        Raw calorimeter rings data from ROOT file.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Converted calorimeter rings data in Python dictionary format.
+    """
     new_data = []
     for d in data:
         new_data.append({
@@ -413,6 +484,19 @@ def CaloRingsContainer_Rings_as_python(data):
 
 
 def ElectronContainer_Electrons_as_python(data):
+    """
+    Convert ElectronContainer_Electrons data to Python dictionary format.
+
+    Parameters
+    ----------
+    data : Iterable
+        Raw electron data from ROOT file.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Converted electron data in Python dictionary format.
+    """
     new_data = []
     for d in data:
         new_data.append({
@@ -426,6 +510,19 @@ def ElectronContainer_Electrons_as_python(data):
 
 
 def SeedContainer_Seeds_values_as_python(data):
+    """
+    Convert SeedContainer_Seeds data to Python dictionary format.
+
+    Parameters
+    ----------
+    data : Iterable
+        Raw seed data from ROOT file.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Converted seed data in Python dictionary format.
+    """
     new_data = []
     for d in data:
         new_data.append({
@@ -438,6 +535,19 @@ def SeedContainer_Seeds_values_as_python(data):
 
 
 def TruthParticleContainer_Particles_as_python(data):
+    """
+    Convert TruthParticleContainer_Particles data to Python dictionary format.
+
+    Parameters
+    ----------
+    data : Iterable
+        Raw truth particle data from ROOT file.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Converted truth particle data in Python dictionary format.
+    """
     new_data = []
     for d in data:
         new_data.append({
@@ -457,6 +567,19 @@ def TruthParticleContainer_Particles_as_python(data):
 
 
 def event_as_python(event):
+    """
+    Convert a single AOD event to Python dictionary format.
+
+    Parameters
+    ----------
+    event : ROOT.TTree.event
+        A single event from the ROOT TTree.
+
+    Returns
+    -------
+    Dict[str, List[Dict[str, Any]]]
+        The event data converted to Python dictionary format with all containers.
+    """
     new_data = {
         'CaloCellContainer_Cells': CaloCellContainer_Cells_as_python(event.CaloCellContainer_Cells),
         'CaloClusterContainer_Clusters': CaloClusterContainer_Clusters_as_python(event.CaloClusterContainer_Clusters),
@@ -479,6 +602,21 @@ app = typer.Typer(
 
 def sample_generator(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChain,
                      ttree_name: str = 'CollectionTree'):
+    """
+    Generate AOD events from ROOT files as Python dictionaries.
+
+    Parameters
+    ----------
+    input_file : str | Path | Iterable[Path] | Iterable[str] | ROOT.TChain
+        Path to input ROOT file(s) or an existing ROOT TChain.
+    ttree_name : str, optional
+        Name of the TTree to read from the ROOT file. Default is 'CollectionTree'.
+
+    Yields
+    ------
+    Dict[str, List[Dict[str, Any]]]
+        Individual AOD events converted to Python dictionary format.
+    """
     if not isinstance(input_file, ROOT.TChain):
         chain = ROOT.TChain(ttree_name)
         for file in open_directories(input_file, file_ext='root'):
@@ -530,10 +668,15 @@ def to_pdf(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChain
 
     Parameters
     ----------
-    input_file : str | Path
-        The path to the input AOD root file.
+    input_file : str | Path | Iterable[Path] | Iterable[str] | ROOT.TChain
+        The path to the input AOD root file(s) or an existing ROOT TChain.
     ttree_name : str, optional
         The name of the TTree to read from the root file. Default is 'CollectionTree'.
+
+    Returns
+    -------
+    pd.DataFrame
+        A pandas DataFrame containing the AOD data with proper PyArrow dtypes.
     """
     data = to_dict(input_file, ttree_name)
     data = pd.DataFrame.from_dict(data)
@@ -606,16 +749,32 @@ def to_duckdb(
     """
     with duckdb.connect(str(output_file)) as conn:
         conn.execute(CREATE_EVENT_INFO_TABLE_QUERY)
+        conn.execute(CREATE_SEEDS_TABLE_QUERY)
         conn.execute(CREATE_CLUSTERS_TABLE_QUERY)
-        # conn.execute(CREATE_CALO_CELLS_TABLE_QUERY)
-        # conn.execute(CREATE_ELECTRONS_TABLE_QUERY)
-        # conn.execute(CREATE_SEEDS_TABLE_QUERY)
-        # conn.execute(CREATE_TRUTH_PARTICLES_TABLE_QUERY)
+        conn.execute(CREATE_CALO_DESCRIPTOR_CELLS_TABLE_QUERY)
+        conn.execute(CREATE_CALO_CELLS_TABLE_QUERY)
+        conn.execute(CREATE_ELECTRONS_TABLE_QUERY)
+        conn.execute(CREATE_TRUTH_PARTICLES_TABLE_QUERY)
 
         events = defaultdict(list)
 
         clusters = defaultdict(list)
         cluster_id_counter = 0
+
+        seeds = defaultdict(list)
+        seed_id_counter = 0
+
+        calo_descriptor_cells = defaultdict(list)
+        calo_descriptor_id_counter = 0
+
+        calo_cells = defaultdict(list)
+        calo_cell_id_counter = 0
+
+        electrons = defaultdict(list)
+        electron_id_counter = 0
+
+        truth_particles = defaultdict(list)
+        truth_particles_counter = 0
 
         if batch_size < 0:
             batch_size = np.inf
@@ -630,13 +789,33 @@ def to_duckdb(
             for key, value in aod_event['EventInfoContainer_Events'][0].items():
                 events[key].append(value)
 
+            seed_link_map = {}
+            seed_event_id_seed_id_map = {}
+            for i, seed_struct in enumerate(aod_event['SeedContainer_Seeds']):
+                seed_link_map[i] = seed_id_counter
+                seeds['id'].append(seed_id_counter)
+                seeds['event_id'].append(event_id)
+                for key, value in seed_struct.items():
+                    if key == 'id':
+                        seed_event_id_seed_id_map[value] = seed_id_counter
+                    else:
+                        seeds[key].append(value)
+                seed_id_counter += 1
+
+            cluster_link_id_map = {}
+            cell_cluster_id_map = {}
             for i, cluster_struct in enumerate(aod_event['CaloClusterContainer_Clusters']):
                 clusters['id'].append(cluster_id_counter)
+                cluster_link_id_map[i] = cluster_id_counter
                 clusters['event_id'].append(event_id)
                 for key, value in cluster_struct.items():
                     if key == 'cell_links':
-                        continue
-                    clusters[key].append(value)
+                        for cell_link in value:
+                            cell_cluster_id_map[cell_link] = cluster_id_counter
+                    elif key == 'seed_link':
+                        clusters['seed_id'].append(seed_link_map[value])
+                    else:
+                        clusters[key].append(value)
                 clusters['rings'].append([])
                 for ring_struct in aod_event['CaloRingsContainer_Rings']:
                     if ring_struct['cluster_link'] == i:
@@ -644,26 +823,93 @@ def to_duckdb(
                         break
                 cluster_id_counter += 1
 
+            descriptor_link_hash_id_map = {}
+            for i, calo_descriptor_cell_struct in enumerate(aod_event['CaloDetDescriptorContainer_Cells']):
+                calo_descriptor_cells['id'].append(calo_descriptor_id_counter)
+                for key, value in calo_descriptor_cell_struct.items():
+                    if key == 'hash':
+                        calo_descriptor_cells['cluster_id'].append(cell_cluster_id_map[value])
+                        descriptor_link_hash_id_map[value] = calo_descriptor_id_counter
+                    else:
+                        calo_descriptor_cells[key].append(value)
+                calo_descriptor_id_counter += 1
+
+            for i, calo_cells_struct in enumerate(aod_event['CaloCellContainer_Cells']):
+                calo_cells['id'].append(calo_cell_id_counter)
+                for key, value in calo_cells_struct.items():
+                    if key == 'descriptor_link':
+                        calo_cells['descriptor_id'].append(descriptor_link_hash_id_map[value])
+                    else:
+                        calo_cells[key].append(value)
+                calo_cell_id_counter += 1
+
+            for i, electrons_struct in enumerate(aod_event['ElectronContainer_Electrons']):
+                electrons['id'].append(electron_id_counter)
+                if electrons_struct['cluster_link'] not in cluster_link_id_map:
+                    if len(aod_event['ElectronContainer_Electrons']) == 1 and len(cluster_link_id_map) == 1:
+                        electrons['cluster_id'].append(list(cluster_link_id_map.keys())[0])
+                    else:
+                        raise ValueError(f"Unknown cluster link: {electrons_struct['cluster_link']}")
+                else:
+                    electrons['cluster_id'].append(cluster_link_id_map[electrons_struct['cluster_link']])
+                for key, value in electrons_struct.items():
+                    if key == 'cluster_link':
+                        continue
+                    electrons[key].append(value)
+                electron_id_counter += 1
+
+            for i, truth_particle_struct in enumerate(aod_event['TruthParticleContainer_Particles']):
+                truth_particles['id'].append(truth_particles_counter)
+                truth_particles['event_id'].append(event_id)
+                for key, value in truth_particle_struct.items():
+                    if key == 'seedid':
+                        truth_particles['seed_id'].append(seed_event_id_seed_id_map[value])
+                    else:
+                        truth_particles[key].append(value)
+                truth_particles_counter += 1
+
             if batch_samples >= batch_size:
                 logging.info(
                     f'Inserting batch {batch_counter} with {len(events["id"])} events')
-                write_batch_to_duck_db(conn, events, clusters)
+                write_batch_to_duck_db(conn,
+                                       events,
+                                       clusters,
+                                       seeds,
+                                       calo_descriptor_cells,
+                                       calo_cells,
+                                       electrons,
+                                       truth_particles)
                 events = defaultdict(list)
                 clusters = defaultdict(list)
+                seeds = defaultdict(list)
+                calo_descriptor_cells = defaultdict(list)
+                calo_cells = defaultdict(list)
                 batch_counter += 1
             else:
                 batch_samples += 1
 
         # Dumps remaining data
         logging.info('Inserting remaining data')
-        write_batch_to_duck_db(conn, events, clusters)
+        write_batch_to_duck_db(conn,
+                               events,
+                               clusters,
+                               seeds,
+                               calo_descriptor_cells,
+                               calo_cells,
+                               electrons,
+                               truth_particles)
         logging.debug('Finished batch processing')
 
 
 def write_batch_to_duck_db(
         conn: duckdb.DuckDBPyConnection,
         events: Dict[str, List[Any]],
-        clusters: Dict[str, List[Any]]
+        clusters: Dict[str, List[Any]],
+        seeds: Dict[str, List[Any]],
+        calo_descriptor_cells: Dict[str, List[Any]],
+        calo_cells: Dict[str, List[Any]],
+        electrons: Dict[str, List[Any]],
+        truth_particles: Dict[str, List[Any]]
 ) -> None:
     """
     Write a batch of events and clusters to the DuckDB database.
@@ -676,11 +922,45 @@ def write_batch_to_duck_db(
         The events data to write.
     clusters : Dict[str, List[Any]]
         The clusters data to write.
+    seeds : Dict[str, List[Any]]
+        The seeds data to write.
+    calo_descriptor_cells : Dict[str, List[Any]]
+        The calorimeter descriptor cells data to write.
+    calo_cells : Dict[str, List[Any]]
+        The calorimeter cells data to write.
+    electrons : Dict[str, List[Any]]
+        The electrons data to write.
+    truth_particles : Dict[str, List[Any]]
+        The truth particles data to write.
+
+    Returns
+    -------
+    None
     """
     events_df = pd.DataFrame.from_dict(events)  # noqa: F841 Ignores the unused variable
     conn.execute("INSERT INTO events BY NAME SELECT * FROM events_df;")
+
+    seeds_df = pd.DataFrame.from_dict(seeds)  # noqa: F841 Ignores the unused variable
+    conn.execute("INSERT INTO seeds BY NAME SELECT * FROM seeds_df;")
+
     clusters_df = pd.DataFrame.from_dict(clusters)
     for field_name in CLUSTERS_PYARROW_SCHEMA.names:
-        clusters_df[field_name] = clusters_df[field_name].astype(
-            pd.ArrowDtype(CLUSTERS_PYARROW_SCHEMA.field(field_name).type))
+        if field_name == 'seed_link':
+            clusters_df['seed_id'] = clusters_df['seed_id'].astype(
+                pd.ArrowDtype(CLUSTERS_PYARROW_SCHEMA.field('seed_link').type))
+        else:
+            clusters_df[field_name] = clusters_df[field_name].astype(
+                pd.ArrowDtype(CLUSTERS_PYARROW_SCHEMA.field(field_name).type))
     conn.execute("INSERT INTO clusters BY NAME SELECT * FROM clusters_df;")
+
+    calo_descriptor_cells_df = pd.DataFrame.from_dict(calo_descriptor_cells)  # noqa: F841 Ignores the unused variable
+    conn.execute("INSERT INTO calo_descriptor_cells BY NAME SELECT * FROM calo_descriptor_cells_df;")
+
+    calo_cells_df = pd.DataFrame.from_dict(calo_cells)  # noqa: F841 Ignores the unused variable
+    conn.execute("INSERT INTO calo_cells BY NAME SELECT * FROM calo_cells_df;")
+
+    electrons_df = pd.DataFrame.from_dict(electrons)  # noqa: F841 Ignores the unused variable
+    conn.execute("INSERT INTO electrons BY NAME SELECT * FROM electrons_df;")
+
+    truth_particles_df = pd.DataFrame.from_dict(truth_particles)  # noqa: F841 Ignores the unused variable
+    conn.execute("INSERT INTO truth_particles BY NAME SELECT * FROM truth_particles_df;")
