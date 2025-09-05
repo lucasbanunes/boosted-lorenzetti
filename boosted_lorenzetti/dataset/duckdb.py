@@ -561,3 +561,21 @@ def add_kfold(
             WHERE {src_table}.{id_col} = label_df.{id_col};
             COMMIT;
         """)
+
+
+def create_standard_scaler_macros(conn: duckdb.DuckDBPyConnection):
+    conn.execute("""
+CREATE OR REPLACE MACRO scaling_params(table_name, column_list) AS TABLE
+    FROM query_table(table_name)
+    SELECT
+        "avg_\\0": avg(columns(column_list)),
+        "std_\\0": stddev_pop(columns(column_list));
+""")
+    conn.execute("""
+CREATE OR REPLACE MACRO standard_scaler(val, mean, std) AS
+(val - mean) / std;
+""")
+
+
+def create_ringer_l1_macro(conn: duckdb.DuckDBPyConnection):
+    conn.execute("CREATE OR REPLACE MACRO ringer_l1(val) AS abs(list_aggregate(val, 'sum'));")
