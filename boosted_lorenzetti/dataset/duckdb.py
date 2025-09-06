@@ -3,7 +3,7 @@ import logging
 import lightning as L
 import duckdb
 from pathlib import Path
-from typing import List, Literal, Tuple, Annotated
+from typing import Any, List, Literal, Tuple, Annotated
 from sklearn.utils import compute_class_weight
 import torch
 import mlflow
@@ -610,3 +610,13 @@ def add_metadata_table(
         INSERT INTO metadata (name, description)
         VALUES (?, ?)
     """, (name, description))
+
+
+def get_metadata(
+    conn: duckdb.DuckDBPyConnection,
+    table_name: str = 'metadata'
+) -> dict[str, Any]:
+    if not check_table_exists(conn, table_name):
+        raise ValueError(f"{table_name} table does not exist.")
+    metadata = conn.execute(f"SELECT * FROM {table_name} LIMIT 1;").df().iloc[0].to_dict()
+    return metadata

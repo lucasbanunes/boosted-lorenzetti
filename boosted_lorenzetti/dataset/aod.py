@@ -181,7 +181,7 @@ STRUCTS = [
 
 CREATE_EVENT_INFO_TABLE_QUERY = """
 CREATE TABLE events (
-    id BIGINT PRIMARY KEY,
+    id UBIGINT PRIMARY KEY,
     avgmu FLOAT,
     eventNumber FLOAT,
     runNumber FLOAT
@@ -190,8 +190,8 @@ CREATE TABLE events (
 
 CREATE_SEEDS_TABLE_QUERY = """
 CREATE TABLE seeds (
-    id BIGINT PRIMARY KEY,
-    event_id BIGINT REFERENCES events(id),
+    id UBIGINT PRIMARY KEY,
+    event_id UBIGINT REFERENCES events(id),
     e FLOAT,
     et FLOAT,
     eta FLOAT,
@@ -202,8 +202,8 @@ CREATE TABLE seeds (
 
 CREATE_CLUSTERS_TABLE_QUERY = """
 CREATE TABLE clusters (
-    id BIGINT PRIMARY KEY,
-    event_id BIGINT REFERENCES events(id),
+    id UBIGINT PRIMARY KEY,
+    event_id UBIGINT REFERENCES events(id),
     deta FLOAT,
     dphi FLOAT,
     e FLOAT,
@@ -239,7 +239,7 @@ CREATE TABLE clusters (
     rphi FLOAT,
     secondLambda FLOAT,
     secondR FLOAT,
-    seed_id BIGINT REFERENCES seeds(id),
+    seed_id UBIGINT REFERENCES seeds(id),
     weta2 FLOAT,
     rings FLOAT[]
 );
@@ -248,8 +248,8 @@ CREATE TABLE clusters (
 
 CREATE_CALO_CELLS_TABLE_QUERY = """
 CREATE TABLE calo_cells (
-    id BIGINT PRIMARY KEY,
-    descriptor_id BIGINT REFERENCES calo_descriptor_cells(id),
+    id UBIGINT PRIMARY KEY,
+    descriptor_id UBIGINT REFERENCES calo_descriptor_cells(id),
     deta FLOAT,
     dphi FLOAT,
     e FLOAT,
@@ -262,8 +262,8 @@ CREATE TABLE calo_cells (
 
 CREATE_CALO_DESCRIPTOR_CELLS_TABLE_QUERY = """
 CREATE TABLE calo_descriptor_cells (
-    id BIGINT PRIMARY KEY,
-    cluster_id BIGINT REFERENCES clusters(id),
+    id UBIGINT PRIMARY KEY,
+    cluster_id UBIGINT REFERENCES clusters(id),
     bc_duration FLOAT,
     bcid_end INTEGER,
     bcid_start INTEGER,
@@ -274,7 +274,7 @@ CREATE TABLE calo_descriptor_cells (
     edep FLOAT,
     edep_per_bunch FLOAT[],
     eta FLOAT,
-    hash BIGINT,
+    hash UBIGINT,
     phi FLOAT,
     pulse FLOAT[],
     sampling INTEGER,
@@ -286,8 +286,8 @@ CREATE TABLE calo_descriptor_cells (
 
 CREATE_ELECTRONS_TABLE_QUERY = """
 CREATE TABLE electrons (
-    id BIGINT PRIMARY KEY,
-    cluster_id BIGINT REFERENCES clusters(id),
+    id UBIGINT PRIMARY KEY,
+    cluster_id UBIGINT REFERENCES clusters(id),
     e FLOAT,
     et FLOAT,
     eta FLOAT,
@@ -298,9 +298,9 @@ CREATE TABLE electrons (
 
 CREATE_TRUTH_PARTICLES_TABLE_QUERY = """
 CREATE TABLE truth_particles (
-    id BIGINT PRIMARY KEY,
-    event_id BIGINT REFERENCES events(id),
-    seed_id BIGINT REFERENCES seeds(id),
+    id UBIGINT PRIMARY KEY,
+    event_id UBIGINT REFERENCES events(id),
+    seed_id UBIGINT REFERENCES seeds(id),
     e FLOAT,
     et FLOAT,
     eta FLOAT,
@@ -828,7 +828,8 @@ def to_duckdb(
                 calo_descriptor_cells['id'].append(calo_descriptor_id_counter)
                 for key, value in calo_descriptor_cell_struct.items():
                     if key == 'hash':
-                        calo_descriptor_cells['cluster_id'].append(cell_cluster_id_map[value])
+                        calo_descriptor_cells['cluster_id'].append(
+                            cell_cluster_id_map[value])
                         descriptor_link_hash_id_map[value] = calo_descriptor_id_counter
                     else:
                         calo_descriptor_cells[key].append(value)
@@ -838,7 +839,8 @@ def to_duckdb(
                 calo_cells['id'].append(calo_cell_id_counter)
                 for key, value in calo_cells_struct.items():
                     if key == 'descriptor_link':
-                        calo_cells['descriptor_id'].append(descriptor_link_hash_id_map[value])
+                        calo_cells['descriptor_id'].append(
+                            descriptor_link_hash_id_map[value])
                     else:
                         calo_cells[key].append(value)
                 calo_cell_id_counter += 1
@@ -849,7 +851,8 @@ def to_duckdb(
                     if key == 'cluster_link':
                         key = 'cluster_id'
                         if value not in cluster_link_id_map:
-                            logging.warning(f'Event {event_id} electron {i} does not have a valid cluster_link: {value} (Clusters: {cluster_link_id_map})')
+                            logging.warning(
+                                f'Event {event_id} electron {i} does not have a valid cluster_link: {value} (Clusters: {cluster_link_id_map})')
                             value = None
                         else:
                             value = cluster_link_id_map[value]
@@ -861,7 +864,8 @@ def to_duckdb(
                 truth_particles['event_id'].append(event_id)
                 for key, value in truth_particle_struct.items():
                     if key == 'seedid':
-                        truth_particles['seed_id'].append(seed_event_id_seed_id_map[value])
+                        truth_particles['seed_id'].append(
+                            seed_event_id_seed_id_map[value])
                     else:
                         truth_particles[key].append(value)
                 truth_particles_counter += 1
@@ -900,7 +904,8 @@ def to_duckdb(
                                truth_particles)
         logging.debug('Finished batch processing')
         bl_duckdb.add_metadata_table(conn,
-                                     name=output_file.stem.replace('-', '_').replace('.', '_'),
+                                     name=output_file.stem.replace(
+                                         '-', '_').replace('.', '_'),
                                      description=description)
         logging.info(f'DuckDB saved to {output_file}')
 
@@ -962,16 +967,190 @@ def write_batch_to_duck_db(
 
     calo_descriptor_cells_df = pd.DataFrame.from_dict(calo_descriptor_cells)  # noqa: F841 Ignores the unused variable
     if len(calo_descriptor_cells_df):
-        conn.execute("INSERT INTO calo_descriptor_cells BY NAME SELECT * FROM calo_descriptor_cells_df;")
+        conn.execute(
+            "INSERT INTO calo_descriptor_cells BY NAME SELECT * FROM calo_descriptor_cells_df;")
 
     calo_cells_df = pd.DataFrame.from_dict(calo_cells)  # noqa: F841 Ignores the unused variable
     if len(calo_cells_df):
-        conn.execute("INSERT INTO calo_cells BY NAME SELECT * FROM calo_cells_df;")
+        conn.execute(
+            "INSERT INTO calo_cells BY NAME SELECT * FROM calo_cells_df;")
 
     electrons_df = pd.DataFrame.from_dict(electrons)  # noqa: F841 Ignores the unused variable
     if len(electrons_df):
-        conn.execute("INSERT INTO electrons BY NAME SELECT * FROM electrons_df;")
+        conn.execute(
+            "INSERT INTO electrons BY NAME SELECT * FROM electrons_df;")
 
     truth_particles_df = pd.DataFrame.from_dict(truth_particles)  # noqa: F841 Ignores the unused variable
     if len(truth_particles_df):
-        conn.execute("INSERT INTO truth_particles BY NAME SELECT * FROM truth_particles_df;")
+        conn.execute(
+            "INSERT INTO truth_particles BY NAME SELECT * FROM truth_particles_df;")
+
+
+CREATE_RINGER_DATABASE_SOURCES_TABLE_QUERY = """
+CREATE SEQUENCE source_id_seq START 1;
+CREATE TABLE sources (
+    id UBIGINT PRIMARY KEY DEFAULT nextval('source_id_seq'),
+    name TEXT NOT NULL,
+    description TEXT,
+    label UTINYINT NOT NULL
+);
+"""
+
+CREATE_RINGER_DATASET_TABLE_QUERY = """
+CREATE SEQUENCE data_id_seq START 1;
+CREATE TABLE data (
+    id UBIGINT PRIMARY KEY DEFAULT nextval('data_id_seq'),
+    source_id UBIGINT REFERENCES sources(id),
+    event_id UBIGINT,
+    eventNumber FLOAT,
+    avgmu FLOAT,
+    cluster_id UBIGINT,
+    cl_eta FLOAT,
+    cl_phi FLOAT,
+    cl_e FLOAT,
+    cl_et FLOAT,
+    cl_deta FLOAT,
+    cl_dphi FLOAT,
+    cl_e0 FLOAT,
+    cl_e1 FLOAT,
+    cl_e2 FLOAT,
+    cl_e3 FLOAT,
+    cl_ehad1 FLOAT,
+    cl_ehad2 FLOAT,
+    cl_ehad3 FLOAT,
+    cl_etot FLOAT,
+    cl_e233 FLOAT,
+    cl_e237 FLOAT,
+    cl_e277 FLOAT,
+    cl_emaxs1 FLOAT,
+    cl_emaxs2 FLOAT,
+    cl_e2tsts1 FLOAT,
+    cl_reta FLOAT,
+    cl_rphi FLOAT,
+    cl_rhad FLOAT,
+    cl_rhad1 FLOAT,
+    cl_eratio FLOAT,
+    cl_f0 FLOAT,
+    cl_f1 FLOAT,
+    cl_f2 FLOAT,
+    cl_f3 FLOAT,
+    cl_weta2 FLOAT,
+    cl_rings FLOAT[],
+    cl_secondR FLOAT,
+    cl_lambdaCenter FLOAT,
+    cl_fracMax FLOAT,
+    cl_lateralMom FLOAT,
+);
+"""
+
+SELECT_RINGER_DATASET_DATA_TABLE_QUERY = """
+SELECT
+    {source_id} as source_id,
+    {db_name}.events.id as event_id,
+    {db_name}.events.eventNumber as eventNumber,
+    {db_name}.events.avgmu as avgmu,
+    {db_name}.clusters.id as cluster_id,
+    {db_name}.clusters.eta as cl_eta,
+    {db_name}.clusters.phi as cl_phi,
+    {db_name}.clusters.e as cl_e,
+    {db_name}.clusters.et as cl_et,
+    {db_name}.clusters.deta as cl_deta,
+    {db_name}.clusters.dphi as cl_dphi,
+    {db_name}.clusters.e0 as cl_e0,
+    {db_name}.clusters.e1 as cl_e1,
+    {db_name}.clusters.e2 as cl_e2,
+    {db_name}.clusters.e3 as cl_e3,
+    {db_name}.clusters.ehad1 as cl_ehad1,
+    {db_name}.clusters.ehad2 as cl_ehad2,
+    {db_name}.clusters.ehad3 as cl_ehad3,
+    {db_name}.clusters.etot as cl_etot,
+    {db_name}.clusters.e233 as cl_e233,
+    {db_name}.clusters.e237 as cl_e237,
+    {db_name}.clusters.e277 as cl_e277,
+    {db_name}.clusters.emaxs1 as cl_emaxs1,
+    {db_name}.clusters.emaxs2 as cl_emaxs2,
+    {db_name}.clusters.e2tsts1 as cl_e2tsts1,
+    {db_name}.clusters.reta as cl_reta,
+    {db_name}.clusters.rphi as cl_rphi,
+    {db_name}.clusters.rhad as cl_rhad,
+    {db_name}.clusters.rhad1 as cl_rhad1,
+    {db_name}.clusters.eratio as cl_eratio,
+    {db_name}.clusters.f0 as cl_f0,
+    {db_name}.clusters.f1 as cl_f1,
+    {db_name}.clusters.f2 as cl_f2,
+    {db_name}.clusters.f3 as cl_f3,
+    {db_name}.clusters.weta2 as cl_weta2,
+    {db_name}.clusters.rings as cl_rings,
+    {db_name}.clusters.secondR as cl_secondR,
+    {db_name}.clusters.lambdaCenter as cl_lambdaCenter,
+    {db_name}.clusters.fracMax as cl_fracMax,
+    {db_name}.clusters.lateralMom as cl_lateralMom
+FROM {db_name}.events
+    LEFT JOIN {db_name}.clusters ON {db_name}.events.id = {db_name}.clusters.event_id;
+"""
+
+
+@app.command(
+    help='Creates a Ringer dataset from AOD duckdb'
+)
+def create_ringer_dataset(
+    input_dbs: Annotated[
+        str,
+        typer.Option(
+            help='Comma separated list of paths to the input AOD duckdb file(s).')
+    ],
+    labels: Annotated[
+        str,
+        typer.Option(
+            help='Comma separated list of positive class labels "0, 1, 3"')
+    ],
+    output_file: OutputFileOption,
+    description: DescriptionOption = None
+) -> None:
+    """
+    Create a Ringer dataset from a set of AOD duckdb databases.
+
+    Parameters
+    ----------
+    input_dbs : List[Path]
+        The paths to the input AOD duckdb files.
+    output_db : Path
+        The path where the output Ringer dataset duckdb file will be saved.
+    db_name : str, optional
+        The name of the database inside the duckdb file. Default is 'aod'.
+    description : str, optional
+        Description of the resulting data.
+    """
+    if isinstance(input_dbs, str):
+        input_dbs = [Path(db.strip()) for db in input_dbs.split(',')]
+    if isinstance(labels, str):
+        labels = [int(label.strip()) for label in labels.split(',')]
+    with duckdb.connect(str(output_file)) as conn:
+        logging.info(f'Creating Ringer dataset duckdb at {output_file}')
+        conn.execute(CREATE_RINGER_DATABASE_SOURCES_TABLE_QUERY)
+        conn.execute(CREATE_RINGER_DATASET_TABLE_QUERY)
+        for source_id, (label, input_db) in enumerate(zip(labels, input_dbs), start=1):
+
+            if not input_db.exists():
+                raise FileNotFoundError(
+                    f'Input duckdb file {input_db} does not exist')
+            with duckdb.connect(str(input_db)) as input_conn:
+                metadata = bl_duckdb.get_metadata(input_conn)
+
+            metadata['name'] = input_db.stem.replace('-', '_').replace('.', '_')
+            conn.execute("INSERT INTO sources (id, name, description, label) VALUES (?, ?, ?, ?);",
+                         (source_id, metadata['name'], metadata['description'], label))
+
+            logging.info(
+                f'Processing label {label} from {input_db} as database {metadata["name"]}')
+            conn.execute(
+                f"ATTACH DATABASE '{input_db}' AS {metadata['name']};")
+            formated_select_query = SELECT_RINGER_DATASET_DATA_TABLE_QUERY.format(
+                source_id=source_id, db_name=metadata['name'])
+            conn.execute(f"INSERT INTO data BY NAME {formated_select_query};")
+
+        bl_duckdb.add_metadata_table(conn,
+                                     name=output_file.stem.replace(
+                                         '-', '_').replace('.', '_'),
+                                     description=description)
+        logging.info(f'Ringer dataset duckdb saved to {output_file}')

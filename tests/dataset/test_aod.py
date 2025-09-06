@@ -95,9 +95,9 @@ def test_aod_create_ringer_dataset(test_data_dir: Path,
 
     # Test create_ringer_dataset function
     aod.create_ringer_dataset(
-        input_paths=f'{str(test_file)}, {str(second_test_file)}',
+        input_dbs=f'{str(test_file)}, {str(second_test_file)}',
         output_file=output_ringer_file,
-        classes="0, 1",
+        labels="0, 1",
         description="Test ringer dataset"
     )
 
@@ -109,9 +109,9 @@ def test_aod_create_ringer_dataset(test_data_dir: Path,
         df = con.execute("SELECT * FROM data LIMIT 1").pl()
         assert len(df) > 0, "Data table is empty or unreadable."
 
-        # Check if source_dbs table exists
-        df_source = con.execute("SELECT * FROM source_dbs").pl()
-        assert len(df_source) >= 0, "Source_dbs table is unreadable."
+        # Check if sources table exists
+        df_source = con.execute("SELECT * FROM sources").pl()
+        assert len(df_source) >= 0, "sources table is unreadable."
 
         # Check if metadata table exists
         df_metadata = con.execute("SELECT * FROM metadata").pl()
@@ -131,12 +131,12 @@ def test_aod_create_ringer_dataset_cli(test_data_dir: Path,
                              f'{str(repo_path)}/cli.py',
                              'aod',
                              'create-ringer-dataset',
-                             '--input-paths', f'{str(test_file)}, {str(second_test_file)}',
+                             '--input-dbs', f'{str(test_file)}, {str(second_test_file)}',
                              '--output-file', str(output_ringer_file),
-                             '--classes', '0',
+                             '--labels', '0, 1',
                              '--description', 'Test ringer dataset'],
                             capture_output=True, text=True)
-    logging.info("STDOUT: %s", result.stdout)
+    logging.info("STDOUT: %s", result.stdout )
     logging.error("STDERR: %s", result.stderr)
 
     assert output_ringer_file.exists(), "Ringer dataset file does not exist."
@@ -147,9 +147,9 @@ def test_aod_create_ringer_dataset_cli(test_data_dir: Path,
         df = con.execute("SELECT * FROM data LIMIT 1").pl()
         assert len(df) > 0, "Data table is empty or unreadable."
 
-        # Check if source_dbs table exists
-        df_source = con.execute("SELECT * FROM source_dbs").pl()
-        assert len(df_source) >= 0, "Source_dbs table is unreadable."
+        # Check if sources table exists
+        df_source = con.execute("SELECT * FROM sources").pl()
+        assert len(df_source) >= 0, "sources table is unreadable."
 
         # Check if metadata table exists
         df_metadata = con.execute("SELECT * FROM metadata").pl()
