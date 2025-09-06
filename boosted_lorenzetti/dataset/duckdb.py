@@ -620,3 +620,27 @@ def get_metadata(
         raise ValueError(f"{table_name} table does not exist.")
     metadata = conn.execute(f"SELECT * FROM {table_name} LIMIT 1;").df().iloc[0].to_dict()
     return metadata
+
+
+CLASS_WEIGHTS_QUERY = """
+SELECT
+    {label_col},
+    COUNT({label_col}) as n_labels,
+    (SELECT (SELECT COUNT(*) FROM {table_name} WHERE {label_col} >=0)/COUNT(DISTINCT({label_col})) FROM {table_name} WHERE {label_col} >= 0)/n_labels as weights
+FROM {table_name}
+GROUP BY {label_col} HAVING {label_col} >= 0;"""
+
+
+def get_balanced_class_weights(
+    conn: duckdb.DuckDBPyConnection,
+    table_name: str,
+    label_col: str,
+) -> list[float]:
+    if not check_table_exists(conn, table_name):
+        raise ValueError(f"{table_name} table does not exist.")
+    query = CLASS_WEIGHTS_QUERY.format(
+        table_name=table_name,
+        label_col=label_col
+    )
+    result = conn.execute(query).df().sort_values(by=label_col)['weights'].values
+    return result
