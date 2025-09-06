@@ -626,8 +626,7 @@ def sample_generator(input_file: str | Path | Iterable[Path] | Iterable[str] | R
 
 
 def to_dict(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChain,
-            ttree_name: str = 'CollectionTree',
-            batch_size: int = -1):
+            ttree_name: str = 'CollectionTree'):
     """
     Convert a single AOD root file to a dictionary representation.
 
@@ -637,8 +636,6 @@ def to_dict(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChai
         The path to the input AOD root file.
     ttree_name : str, optional
         The name of the TTree to read from the root file. Default is 'CollectionTree'.
-    batch_size: int, optional
-        Defines the size of the batch to process. Default is -1 (all data at once).
 
     Returns
     -------
@@ -647,17 +644,9 @@ def to_dict(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChai
     """
 
     data = defaultdict(list)
-    if batch_size < 0:
-        batch_size = np.inf
-    batch_counter = 0
     for event in sample_generator(input_file, ttree_name):
         for col_name, value in event.items():
             data[col_name].append(value)
-        batch_counter += 1
-        if batch_counter >= batch_size:
-            yield data
-            data = defaultdict(list)
-            batch_counter = 0
     return data
 
 
