@@ -365,11 +365,12 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
             per_cluster_evaluation[f'class_{class_}_ratio'] = []
 
         logging.info('Evaluating clustering results.')
+        pred_classes = np.unique(y_pred)
         evaluation = {
             'inertia': inertia,
             'variance': inertia/len(X),
             # 'silhouette_score': silhouette_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
-            'calinski_harabasz_score': calinski_harabasz_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
+            'calinski_harabasz_score': calinski_harabasz_score(X, y_pred) if len(pred_classes) > 1 else self.INVALID_SCORE,
             # 'davies_bouldin_score': davies_bouldin_score(X, y_pred) if self.n_clusters > 1 else self.INVALID_SCORE,
             'accuracy': -1,
         }
@@ -503,21 +504,20 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
             go.Scatter(
                 x=pca_pipeline_df['component'],
                 y=pca_pipeline_df['cum_variance'],
-                name="Accumulated",
-                yaxis="Accumulated"),
+                name="Accumulated"),
             secondary_y=False,
         )
         fig.add_trace(
             go.Scatter(
                 x=pca_pipeline_df['component'],
                 y=pca_pipeline_df['variance_ratio'],
-                name="Contribution",
-                yaxis="Contribution"),
+                name="Contribution"),
             secondary_y=True,
         )
         fig.update_layout(
             title='Contribution of PCA componentes to variance',
             xaxis_title='Components',
+            yaxis_title='Variance',
             legend=dict(
                 title_text='Variable'
             )

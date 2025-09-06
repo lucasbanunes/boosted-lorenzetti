@@ -8,12 +8,12 @@ import gzip
 import pickle
 from io import BytesIO
 import logging
-import cyclopts
+import typer
 
 from .duckdb import check_table_exists
 
 
-app = cyclopts.App(
+app = typer.Typer(
     name='npz',
     help='Operates with legacy npz datasets'
 )
@@ -34,8 +34,8 @@ MODEL_REFERENCES_SCHEMA = pl.Schema({
 
 
 @app.command(help='Converts legacy npz dataset to duckdb databases to make easier to manipulate the data.')
-def to_duckdb(dataset_dir: Annotated[Path, cyclopts.Parameter(help="Path to the input dataset directory.")],
-              output_file: Annotated[Path, cyclopts.Parameter(help="Path to the output DuckDB file.")],
+def to_duckdb(dataset_dir: Annotated[Path, typer.Option(help="Path to the input dataset directory.")],
+              output_file: Annotated[Path, typer.Option(help="Path to the output DuckDB file.")],
               overwrite: bool = False):
     """
     Converts legacy npz dataset to `.duckdb` databases to make easier to manipulate the data.

@@ -136,7 +136,7 @@ def test_aod_create_ringer_dataset_cli(test_data_dir: Path,
                              '--labels', '0, 1',
                              '--description', 'Test ringer dataset'],
                             capture_output=True, text=True)
-    logging.info("STDOUT: %s", result.stdout )
+    logging.info("STDOUT: %s", result.stdout)
     logging.error("STDERR: %s", result.stderr)
 
     assert output_ringer_file.exists(), "Ringer dataset file does not exist."
