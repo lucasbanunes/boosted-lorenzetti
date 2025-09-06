@@ -11,6 +11,7 @@ import logging
 
 
 from ..utils import open_directories
+from . import duckdb as bl_duckdb
 
 
 PYARROW_SCHEMA = pa.schema([
@@ -180,7 +181,7 @@ STRUCTS = [
 
 CREATE_EVENT_INFO_TABLE_QUERY = """
 CREATE TABLE events (
-    id BIGINT PRIMARY KEY DEFAULT 0,
+    id BIGINT PRIMARY KEY,
     avgmu FLOAT,
     eventNumber FLOAT,
     runNumber FLOAT
@@ -189,7 +190,7 @@ CREATE TABLE events (
 
 CREATE_SEEDS_TABLE_QUERY = """
 CREATE TABLE seeds (
-    id BIGINT PRIMARY KEY DEFAULT 0,
+    id BIGINT PRIMARY KEY,
     event_id BIGINT REFERENCES events(id),
     e FLOAT,
     et FLOAT,
@@ -201,7 +202,7 @@ CREATE TABLE seeds (
 
 CREATE_CLUSTERS_TABLE_QUERY = """
 CREATE TABLE clusters (
-    id BIGINT PRIMARY KEY DEFAULT 0,
+    id BIGINT PRIMARY KEY,
     event_id BIGINT REFERENCES events(id),
     deta FLOAT,
     dphi FLOAT,
@@ -247,7 +248,7 @@ CREATE TABLE clusters (
 
 CREATE_CALO_CELLS_TABLE_QUERY = """
 CREATE TABLE calo_cells (
-    id BIGINT PRIMARY KEY DEFAULT 0,
+    id BIGINT PRIMARY KEY,
     descriptor_id BIGINT REFERENCES calo_descriptor_cells(id),
     deta FLOAT,
     dphi FLOAT,
@@ -261,7 +262,7 @@ CREATE TABLE calo_cells (
 
 CREATE_CALO_DESCRIPTOR_CELLS_TABLE_QUERY = """
 CREATE TABLE calo_descriptor_cells (
-    id BIGINT PRIMARY KEY DEFAULT 0,
+    id BIGINT PRIMARY KEY,
     cluster_id BIGINT REFERENCES clusters(id),
     bc_duration FLOAT,
     bcid_end INTEGER,
@@ -285,7 +286,7 @@ CREATE TABLE calo_descriptor_cells (
 
 CREATE_ELECTRONS_TABLE_QUERY = """
 CREATE TABLE electrons (
-    id BIGINT PRIMARY KEY DEFAULT 0,
+    id BIGINT PRIMARY KEY,
     cluster_id BIGINT REFERENCES clusters(id),
     e FLOAT,
     et FLOAT,
@@ -297,7 +298,7 @@ CREATE TABLE electrons (
 
 CREATE_TRUTH_PARTICLES_TABLE_QUERY = """
 CREATE TABLE truth_particles (
-    id BIGINT PRIMARY KEY DEFAULT 0,
+    id BIGINT PRIMARY KEY,
     event_id BIGINT REFERENCES events(id),
     seed_id BIGINT REFERENCES seeds(id),
     e FLOAT,
@@ -707,6 +708,17 @@ def to_parquet(
     df.to_parquet(output_file, index=False, compression='gzip')
 
 
+OutputFileOption = Annotated[
+    Path,
+    typer.Option(help='Path to the output file.')
+]
+
+DescriptionOption = Annotated[
+    str,
+    typer.Option(help='Description of the resulting data.')
+]
+
+
 @app.command(
     help='Converts AOD root files to duckdb'
 )
@@ -715,12 +727,10 @@ def to_duckdb(
         List[str],
         typer.Option(help='Path to the input AOD file(s).')
     ],
-    output_file: Annotated[
-        str,
-        typer.Option(help='Path to the output duckdb file.')
-    ],
+    output_file: OutputFileOption,
     ttree_name: str = 'CollectionTree',
-    batch_size: int = -1
+    batch_size: int = -1,
+    description: DescriptionOption = None
 ) -> None:
     """
     Convert AOD root files to a duckdb database.
@@ -748,29 +758,30 @@ def to_duckdb(
         events = defaultdict(list)
 
         clusters = defaultdict(list)
-        cluster_id_counter = 0
+        cluster_id_counter = 1
 
         seeds = defaultdict(list)
-        seed_id_counter = 0
+        seed_id_counter = 1
 
         calo_descriptor_cells = defaultdict(list)
-        calo_descriptor_id_counter = 0
+        calo_descriptor_id_counter = 1
 
         calo_cells = defaultdict(list)
-        calo_cell_id_counter = 0
+        calo_cell_id_counter = 1
 
         electrons = defaultdict(list)
-        electron_id_counter = 0
+        electron_id_counter = 1
 
         truth_particles = defaultdict(list)
-        truth_particles_counter = 0
+        truth_particles_counter = 1
 
         if batch_size < 0:
             batch_size = np.inf
         batch_counter = 0
         batch_samples = 0
         logging.info('Starting batch processing')
-        for event_id, aod_event in enumerate(sample_generator(input_file, ttree_name)):
+        for event_id, aod_event in enumerate(sample_generator(input_file, ttree_name),
+                                             start=1):
 
             if len(aod_event['EventInfoContainer_Events']) != 1:
                 raise RuntimeError("Expected exactly one event")
@@ -834,16 +845,14 @@ def to_duckdb(
 
             for i, electrons_struct in enumerate(aod_event['ElectronContainer_Electrons']):
                 electrons['id'].append(electron_id_counter)
-                if electrons_struct['cluster_link'] not in cluster_link_id_map:
-                    if len(aod_event['ElectronContainer_Electrons']) == 1 and len(cluster_link_id_map) == 1:
-                        electrons['cluster_id'].append(list(cluster_link_id_map.keys())[0])
-                    else:
-                        raise ValueError(f"Unknown cluster link: {electrons_struct['cluster_link']}")
-                else:
-                    electrons['cluster_id'].append(cluster_link_id_map[electrons_struct['cluster_link']])
                 for key, value in electrons_struct.items():
                     if key == 'cluster_link':
-                        continue
+                        key = 'cluster_id'
+                        if value not in cluster_link_id_map:
+                            logging.warning(f'Event {event_id} electron {i} does not have a valid cluster_link: {value} (Clusters: {cluster_link_id_map})')
+                            value = None
+                        else:
+                            value = cluster_link_id_map[value]
                     electrons[key].append(value)
                 electron_id_counter += 1
 
@@ -857,6 +866,7 @@ def to_duckdb(
                         truth_particles[key].append(value)
                 truth_particles_counter += 1
 
+            batch_samples += 1
             if batch_samples >= batch_size:
                 logging.info(
                     f'Inserting batch {batch_counter} with {len(events["id"])} events')
@@ -873,9 +883,10 @@ def to_duckdb(
                 seeds = defaultdict(list)
                 calo_descriptor_cells = defaultdict(list)
                 calo_cells = defaultdict(list)
+                electrons = defaultdict(list)
+                truth_particles = defaultdict(list)
                 batch_counter += 1
-            else:
-                batch_samples += 1
+                batch_samples = 0
 
         # Dumps remaining data
         logging.info('Inserting remaining data')
@@ -888,6 +899,10 @@ def to_duckdb(
                                electrons,
                                truth_particles)
         logging.debug('Finished batch processing')
+        bl_duckdb.add_metadata_table(conn,
+                                     name=output_file.stem.replace('-', '_').replace('.', '_'),
+                                     description=description)
+        logging.info(f'DuckDB saved to {output_file}')
 
 
 def write_batch_to_duck_db(
@@ -927,29 +942,36 @@ def write_batch_to_duck_db(
     None
     """
     events_df = pd.DataFrame.from_dict(events)  # noqa: F841 Ignores the unused variable
-    conn.execute("INSERT INTO events BY NAME SELECT * FROM events_df;")
+    if len(events_df):
+        conn.execute("INSERT INTO events BY NAME SELECT * FROM events_df;")
 
     seeds_df = pd.DataFrame.from_dict(seeds)  # noqa: F841 Ignores the unused variable
-    conn.execute("INSERT INTO seeds BY NAME SELECT * FROM seeds_df;")
+    if len(seeds_df):
+        conn.execute("INSERT INTO seeds BY NAME SELECT * FROM seeds_df;")
 
     clusters_df = pd.DataFrame.from_dict(clusters)
-    for field_name in CLUSTERS_PYARROW_SCHEMA.names:
-        if field_name == 'seed_link':
-            clusters_df['seed_id'] = clusters_df['seed_id'].astype(
-                pd.ArrowDtype(CLUSTERS_PYARROW_SCHEMA.field('seed_link').type))
-        else:
-            clusters_df[field_name] = clusters_df[field_name].astype(
-                pd.ArrowDtype(CLUSTERS_PYARROW_SCHEMA.field(field_name).type))
-    conn.execute("INSERT INTO clusters BY NAME SELECT * FROM clusters_df;")
+    if len(clusters_df):
+        for field_name in CLUSTERS_PYARROW_SCHEMA.names:
+            if field_name == 'seed_link':
+                clusters_df['seed_id'] = clusters_df['seed_id'].astype(
+                    pd.ArrowDtype(CLUSTERS_PYARROW_SCHEMA.field('seed_link').type))
+            else:
+                clusters_df[field_name] = clusters_df[field_name].astype(
+                    pd.ArrowDtype(CLUSTERS_PYARROW_SCHEMA.field(field_name).type))
+        conn.execute("INSERT INTO clusters BY NAME SELECT * FROM clusters_df;")
 
     calo_descriptor_cells_df = pd.DataFrame.from_dict(calo_descriptor_cells)  # noqa: F841 Ignores the unused variable
-    conn.execute("INSERT INTO calo_descriptor_cells BY NAME SELECT * FROM calo_descriptor_cells_df;")
+    if len(calo_descriptor_cells_df):
+        conn.execute("INSERT INTO calo_descriptor_cells BY NAME SELECT * FROM calo_descriptor_cells_df;")
 
     calo_cells_df = pd.DataFrame.from_dict(calo_cells)  # noqa: F841 Ignores the unused variable
-    conn.execute("INSERT INTO calo_cells BY NAME SELECT * FROM calo_cells_df;")
+    if len(calo_cells_df):
+        conn.execute("INSERT INTO calo_cells BY NAME SELECT * FROM calo_cells_df;")
 
     electrons_df = pd.DataFrame.from_dict(electrons)  # noqa: F841 Ignores the unused variable
-    conn.execute("INSERT INTO electrons BY NAME SELECT * FROM electrons_df;")
+    if len(electrons_df):
+        conn.execute("INSERT INTO electrons BY NAME SELECT * FROM electrons_df;")
 
     truth_particles_df = pd.DataFrame.from_dict(truth_particles)  # noqa: F841 Ignores the unused variable
-    conn.execute("INSERT INTO truth_particles BY NAME SELECT * FROM truth_particles_df;")
+    if len(truth_particles_df):
+        conn.execute("INSERT INTO truth_particles BY NAME SELECT * FROM truth_particles_df;")

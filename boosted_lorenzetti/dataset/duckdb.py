@@ -298,10 +298,12 @@ class DuckDBDataset(L.LightningDataModule):
             val_dataset = self.__get_mlflow_dataset(self.val_query, val_name)
             mlflow.log_input(val_dataset, context='validation')
         if self.test_query:
-            test_dataset = self.__get_mlflow_dataset(self.test_query, test_name)
+            test_dataset = self.__get_mlflow_dataset(
+                self.test_query, test_name)
             mlflow.log_input(test_dataset, context='test')
         if self.predict_query:
-            predict_dataset = self.__get_mlflow_dataset(self.predict_query, predict_name)
+            predict_dataset = self.__get_mlflow_dataset(
+                self.predict_query, predict_name)
             mlflow.log_input(predict_dataset, context='prediction')
 
     def train_dataloader(self) -> torch.utils.data.DataLoader:
@@ -497,9 +499,11 @@ def add_table_from_parquet(
         for i, file in enumerate(files):
             logging.info(f'{i} - Adding {file} to {db_path}')
             if i < 1 and (overwrite or (not check_table_exists(con, table_name))):
-                con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_parquet('{file}')")
+                con.execute(
+                    f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_parquet('{file}')")
             else:
-                con.execute(f"INSERT INTO {table_name} SELECT * FROM read_parquet('{file}')")
+                con.execute(
+                    f"INSERT INTO {table_name} SELECT * FROM read_parquet('{file}')")
 
 
 @app.command(
@@ -531,19 +535,22 @@ def add_kfold(
         str, typer.Option(help='Name of the label column')
     ] = 'label',
     filter_cond: Annotated[
-        str | None, typer.Option(help='Optional SQL condition to filter the data before splitting')
+        str | None, typer.Option(
+            help='Optional SQL condition to filter the data before splitting')
     ] = None
 ):
     if random_state is None:
         random_state = seed_factory()
     with duckdb.connect(db_path) as conn:
         logging.info('Selecting data from database')
-        relation = conn.from_query(f'SELECT {id_col}, {label_col} FROM {src_table};')
+        relation = conn.from_query(
+            f'SELECT {id_col}, {label_col} FROM {src_table};')
         if filter_cond:
             relation = relation.filter(filter_cond)
         label_df = relation.pl()
         new_col = np.full(len(label_df), -1, dtype=np.int8)
-        kf = StratifiedKFold(n_splits=n_folds, shuffle=shuffle, random_state=random_state)
+        kf = StratifiedKFold(
+            n_splits=n_folds, shuffle=shuffle, random_state=random_state)
         x_placeholder = np.full(len(label_df), 0, dtype=np.int8)
         logging.info('Creating KFold splits')
         for fold, (_, val_idx) in enumerate(kf.split(x_placeholder, label_df[label_col].to_numpy())):
@@ -578,4 +585,28 @@ CREATE OR REPLACE MACRO standard_scaler(val, mean, std) AS
 
 
 def create_ringer_l1_macro(conn: duckdb.DuckDBPyConnection):
-    conn.execute("CREATE OR REPLACE MACRO ringer_l1(val) AS abs(list_aggregate(val, 'sum'));")
+    conn.execute(
+        "CREATE OR REPLACE MACRO ringer_l1(val) AS abs(list_aggregate(val, 'sum'));")
+
+
+CREATE_METADATA_TABLE_QUERY = """
+CREATE TABLE metadata (
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+
+def add_metadata_table(
+    conn: duckdb.DuckDBPyConnection,
+    name: str,
+    description: str | None = None
+):
+    if '.' in name:
+        raise ValueError("Table name cannot contain '.'")
+    conn.execute(CREATE_METADATA_TABLE_QUERY)
+    conn.execute("""
+        INSERT INTO metadata (name, description)
+        VALUES (?, ?)
+    """, (name, description))
