@@ -755,125 +755,126 @@ def to_duckdb(
         conn.execute(CREATE_ELECTRONS_TABLE_QUERY)
         conn.execute(CREATE_TRUTH_PARTICLES_TABLE_QUERY)
 
-        events = defaultdict(list)
+    events = defaultdict(list)
 
-        clusters = defaultdict(list)
-        cluster_id_counter = 1
+    clusters = defaultdict(list)
+    cluster_id_counter = 1
 
-        seeds = defaultdict(list)
-        seed_id_counter = 1
+    seeds = defaultdict(list)
+    seed_id_counter = 1
 
-        calo_descriptor_cells = defaultdict(list)
-        calo_descriptor_id_counter = 1
+    calo_descriptor_cells = defaultdict(list)
+    calo_descriptor_id_counter = 1
 
-        calo_cells = defaultdict(list)
-        calo_cell_id_counter = 1
+    calo_cells = defaultdict(list)
+    calo_cell_id_counter = 1
 
-        electrons = defaultdict(list)
-        electron_id_counter = 1
+    electrons = defaultdict(list)
+    electron_id_counter = 1
 
-        truth_particles = defaultdict(list)
-        truth_particles_counter = 1
+    truth_particles = defaultdict(list)
+    truth_particles_counter = 1
 
-        if batch_size < 0:
-            batch_size = np.inf
-        batch_counter = 0
-        batch_samples = 0
-        logging.info('Starting batch processing')
-        for event_id, aod_event in enumerate(sample_generator(input_file, ttree_name),
-                                             start=1):
+    if batch_size < 0:
+        batch_size = np.inf
+    batch_counter = 0
+    batch_samples = 0
+    logging.info('Starting batch processing')
+    for event_id, aod_event in enumerate(sample_generator(input_file, ttree_name),
+                                         start=1):
 
-            if len(aod_event['EventInfoContainer_Events']) != 1:
-                raise RuntimeError("Expected exactly one event")
-            events['id'].append(event_id)
-            for key, value in aod_event['EventInfoContainer_Events'][0].items():
-                events[key].append(value)
+        if len(aod_event['EventInfoContainer_Events']) != 1:
+            raise RuntimeError("Expected exactly one event")
+        events['id'].append(event_id)
+        for key, value in aod_event['EventInfoContainer_Events'][0].items():
+            events[key].append(value)
 
-            seed_link_map = {}
-            seed_event_id_seed_id_map = {}
-            for i, seed_struct in enumerate(aod_event['SeedContainer_Seeds']):
-                seed_link_map[i] = seed_id_counter
-                seeds['id'].append(seed_id_counter)
-                seeds['event_id'].append(event_id)
-                for key, value in seed_struct.items():
-                    if key == 'id':
-                        seed_event_id_seed_id_map[value] = seed_id_counter
+        seed_link_map = {}
+        seed_event_id_seed_id_map = {}
+        for i, seed_struct in enumerate(aod_event['SeedContainer_Seeds']):
+            seed_link_map[i] = seed_id_counter
+            seeds['id'].append(seed_id_counter)
+            seeds['event_id'].append(event_id)
+            for key, value in seed_struct.items():
+                if key == 'id':
+                    seed_event_id_seed_id_map[value] = seed_id_counter
+                else:
+                    seeds[key].append(value)
+            seed_id_counter += 1
+
+        cluster_link_id_map = {}
+        cell_cluster_id_map = {}
+        for i, cluster_struct in enumerate(aod_event['CaloClusterContainer_Clusters']):
+            clusters['id'].append(cluster_id_counter)
+            cluster_link_id_map[i] = cluster_id_counter
+            clusters['event_id'].append(event_id)
+            for key, value in cluster_struct.items():
+                if key == 'cell_links':
+                    for cell_link in value:
+                        cell_cluster_id_map[cell_link] = cluster_id_counter
+                elif key == 'seed_link':
+                    clusters['seed_id'].append(seed_link_map[value])
+                else:
+                    clusters[key].append(value)
+            clusters['rings'].append([])
+            for ring_struct in aod_event['CaloRingsContainer_Rings']:
+                if ring_struct['cluster_link'] == i:
+                    clusters['rings'][-1] = ring_struct['rings']
+                    break
+            cluster_id_counter += 1
+
+        descriptor_link_hash_id_map = {}
+        for i, calo_descriptor_cell_struct in enumerate(aod_event['CaloDetDescriptorContainer_Cells']):
+            calo_descriptor_cells['id'].append(calo_descriptor_id_counter)
+            for key, value in calo_descriptor_cell_struct.items():
+                if key == 'hash':
+                    calo_descriptor_cells['cluster_id'].append(
+                        cell_cluster_id_map[value])
+                    descriptor_link_hash_id_map[value] = calo_descriptor_id_counter
+                else:
+                    calo_descriptor_cells[key].append(value)
+            calo_descriptor_id_counter += 1
+
+        for i, calo_cells_struct in enumerate(aod_event['CaloCellContainer_Cells']):
+            calo_cells['id'].append(calo_cell_id_counter)
+            for key, value in calo_cells_struct.items():
+                if key == 'descriptor_link':
+                    calo_cells['descriptor_id'].append(
+                        descriptor_link_hash_id_map[value])
+                else:
+                    calo_cells[key].append(value)
+            calo_cell_id_counter += 1
+
+        for i, electrons_struct in enumerate(aod_event['ElectronContainer_Electrons']):
+            electrons['id'].append(electron_id_counter)
+            for key, value in electrons_struct.items():
+                if key == 'cluster_link':
+                    key = 'cluster_id'
+                    if value not in cluster_link_id_map:
+                        logging.warning(
+                            f'Event {event_id} electron {i} does not have a valid cluster_link: {value} (Clusters: {cluster_link_id_map})')
+                        value = None
                     else:
-                        seeds[key].append(value)
-                seed_id_counter += 1
+                        value = cluster_link_id_map[value]
+                electrons[key].append(value)
+            electron_id_counter += 1
 
-            cluster_link_id_map = {}
-            cell_cluster_id_map = {}
-            for i, cluster_struct in enumerate(aod_event['CaloClusterContainer_Clusters']):
-                clusters['id'].append(cluster_id_counter)
-                cluster_link_id_map[i] = cluster_id_counter
-                clusters['event_id'].append(event_id)
-                for key, value in cluster_struct.items():
-                    if key == 'cell_links':
-                        for cell_link in value:
-                            cell_cluster_id_map[cell_link] = cluster_id_counter
-                    elif key == 'seed_link':
-                        clusters['seed_id'].append(seed_link_map[value])
-                    else:
-                        clusters[key].append(value)
-                clusters['rings'].append([])
-                for ring_struct in aod_event['CaloRingsContainer_Rings']:
-                    if ring_struct['cluster_link'] == i:
-                        clusters['rings'][-1] = ring_struct['rings']
-                        break
-                cluster_id_counter += 1
+        for i, truth_particle_struct in enumerate(aod_event['TruthParticleContainer_Particles']):
+            truth_particles['id'].append(truth_particles_counter)
+            truth_particles['event_id'].append(event_id)
+            for key, value in truth_particle_struct.items():
+                if key == 'seedid':
+                    truth_particles['seed_id'].append(
+                        seed_event_id_seed_id_map[value])
+                else:
+                    truth_particles[key].append(value)
+            truth_particles_counter += 1
 
-            descriptor_link_hash_id_map = {}
-            for i, calo_descriptor_cell_struct in enumerate(aod_event['CaloDetDescriptorContainer_Cells']):
-                calo_descriptor_cells['id'].append(calo_descriptor_id_counter)
-                for key, value in calo_descriptor_cell_struct.items():
-                    if key == 'hash':
-                        calo_descriptor_cells['cluster_id'].append(
-                            cell_cluster_id_map[value])
-                        descriptor_link_hash_id_map[value] = calo_descriptor_id_counter
-                    else:
-                        calo_descriptor_cells[key].append(value)
-                calo_descriptor_id_counter += 1
-
-            for i, calo_cells_struct in enumerate(aod_event['CaloCellContainer_Cells']):
-                calo_cells['id'].append(calo_cell_id_counter)
-                for key, value in calo_cells_struct.items():
-                    if key == 'descriptor_link':
-                        calo_cells['descriptor_id'].append(
-                            descriptor_link_hash_id_map[value])
-                    else:
-                        calo_cells[key].append(value)
-                calo_cell_id_counter += 1
-
-            for i, electrons_struct in enumerate(aod_event['ElectronContainer_Electrons']):
-                electrons['id'].append(electron_id_counter)
-                for key, value in electrons_struct.items():
-                    if key == 'cluster_link':
-                        key = 'cluster_id'
-                        if value not in cluster_link_id_map:
-                            logging.warning(
-                                f'Event {event_id} electron {i} does not have a valid cluster_link: {value} (Clusters: {cluster_link_id_map})')
-                            value = None
-                        else:
-                            value = cluster_link_id_map[value]
-                    electrons[key].append(value)
-                electron_id_counter += 1
-
-            for i, truth_particle_struct in enumerate(aod_event['TruthParticleContainer_Particles']):
-                truth_particles['id'].append(truth_particles_counter)
-                truth_particles['event_id'].append(event_id)
-                for key, value in truth_particle_struct.items():
-                    if key == 'seedid':
-                        truth_particles['seed_id'].append(
-                            seed_event_id_seed_id_map[value])
-                    else:
-                        truth_particles[key].append(value)
-                truth_particles_counter += 1
-
-            batch_samples += 1
-            if batch_samples >= batch_size:
-                logging.info(
-                    f'Inserting batch {batch_counter} with {len(events["id"])} events')
+        batch_samples += 1
+        if batch_samples >= batch_size:
+            logging.info(
+                f'Inserting batch {batch_counter} with {len(events["id"])} events')
+            with duckdb.connect(str(output_file)) as conn:
                 write_batch_to_duck_db(conn,
                                        events,
                                        clusters,
@@ -882,18 +883,19 @@ def to_duckdb(
                                        calo_cells,
                                        electrons,
                                        truth_particles)
-                events = defaultdict(list)
-                clusters = defaultdict(list)
-                seeds = defaultdict(list)
-                calo_descriptor_cells = defaultdict(list)
-                calo_cells = defaultdict(list)
-                electrons = defaultdict(list)
-                truth_particles = defaultdict(list)
-                batch_counter += 1
-                batch_samples = 0
+            events = defaultdict(list)
+            clusters = defaultdict(list)
+            seeds = defaultdict(list)
+            calo_descriptor_cells = defaultdict(list)
+            calo_cells = defaultdict(list)
+            electrons = defaultdict(list)
+            truth_particles = defaultdict(list)
+            batch_counter += 1
+            batch_samples = 0
 
-        # Dumps remaining data
-        logging.info('Inserting remaining data')
+    # Dumps remaining data
+    logging.info('Inserting remaining data')
+    with duckdb.connect(str(output_file)) as conn:
         write_batch_to_duck_db(conn,
                                events,
                                clusters,
@@ -907,7 +909,7 @@ def to_duckdb(
                                      name=output_file.stem.replace(
                                          '-', '_').replace('.', '_'),
                                      description=description)
-        logging.info(f'DuckDB saved to {output_file}')
+    logging.info(f'DuckDB saved to {output_file}')
 
 
 def write_batch_to_duck_db(
@@ -1137,7 +1139,8 @@ def create_ringer_dataset(
             with duckdb.connect(str(input_db)) as input_conn:
                 metadata = bl_duckdb.get_metadata(input_conn)
 
-            metadata['name'] = input_db.stem.replace('-', '_').replace('.', '_')
+            metadata['name'] = input_db.stem.replace(
+                '-', '_').replace('.', '_')
             conn.execute("INSERT INTO sources (id, name, description, label) VALUES (?, ?, ?, ?);",
                          (source_id, metadata['name'], metadata['description'], label))
 
