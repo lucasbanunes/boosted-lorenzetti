@@ -4,7 +4,6 @@ import torch.nn as nn
 from typing import Tuple, List
 import pandas as pd
 from torchmetrics import MetricCollection
-from mlflow.models import infer_signature
 from pathlib import Path
 import mlflow
 import plotly.express as px
@@ -17,7 +16,7 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
     def __init__(self,
                  branch_net: nn.Module,
                  trunk_net: nn.Module,
-                 u_len: int,
+                 branch_input_len: int,
                  class_weights: list[float] | None = None,
                  learning_rate: float = 1e-3,
                  ):
@@ -27,12 +26,13 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
         self.trunk_net = trunk_net
         self.criterion = torch.nn.CrossEntropyLoss()
         self.loss_func = nn.BCEWithLogitsLoss(reduction='none')
-        self.example_input_array = [
+        self.example_input_array = torch.concat([
             self.branch_net.example_input_array,
             self.trunk_net.example_input_array
-        ]
+        ], dim=1)
+        self.example_input_df = None
         self.learning_rate = learning_rate
-        self.u_len = u_len
+        self.branch_input_len = branch_input_len
 
         if class_weights is None:
             self.class_weights = torch.FloatTensor([1.0, 1.0])
@@ -52,8 +52,11 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
             'loss': BCEWithLogitsLossMetric()
         })
 
-    def forward(self, branch_input, trunk_input):
-        return torch.dot(self.branch_net(branch_input), self.trunk_net(trunk_input))
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        return torch.dot(
+            self.branch_net(X[:, :self.branch_input_len]),
+            self.trunk_net(X[:, self.branch_input_len:])
+        )
 
     def reset_metrics(self):
         self.train_metrics.reset()
@@ -71,8 +74,8 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
     def training_step(self,
                       batch: Tuple[Tuple[torch.Tensor, torch.Tensor], torch.Tensor],
                       batch_idx: torch.Tensor):
-        (u, z), y = batch
-        logits = self(u, z)
+        x, y = batch
+        logits = self(x)
         loss = self.get_loss(logits, y.float())
         self.log("train_loss", loss, on_epoch=True, prog_bar=True)
         prob = torch.sigmoid(logits)
@@ -135,19 +138,6 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
             lr=self.learning_rate
         )
         return optimizer
-
-    def mlflow_model_signature(self, model_input=None):
-        if model_input is None:
-            model_input = self.example_input_array
-        with torch.no_grad():
-            self.eval()
-            output = self(*self.example_input_array)
-            signature = infer_signature(
-                model_input=model_input,
-                model_output=output.numpy()  # Convert to numpy for signature
-            )
-            self.train()
-        return signature
 
     def log_test_metrics(self,
                          tmp_dir: Path,
@@ -237,5 +227,6 @@ class MLPUnstackedDeepONetBinaryClassifier(UnstackedDeepONetBinaryClassifier):
             trunk_net=build_mlp(
                 dims=trunk_dims, activations=trunk_activations),
             class_weights=class_weights,
-            learning_rate=learning_rate
+            learning_rate=learning_rate,
+            branch_input_len=branch_dims[0]
         )
