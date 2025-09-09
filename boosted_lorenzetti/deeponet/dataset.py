@@ -2,12 +2,12 @@ from functools import cached_property
 import duckdb
 from pathlib import Path
 import polars as pl
+import lightning as L
+import torch
+# import pandas as pd
+# import mlflow
 
-from ..dataset.duckdb import (
-    create_ringer_l1_macro,
-    DuckDBDataset
-)
-from ..utils import unflatten_dict
+from ..dataset.duckdb import get_balanced_class_weights
 from ..constants import N_RINGS
 
 
@@ -23,7 +23,7 @@ FROM {table_name}
 WHERE {fold_col} != {fold} AND {fold_col} >= 0;"""
 
 
-class DuckDBDeepONetRingerDataset(DuckDBDataset):
+class DuckDBDeepONetRingerDataset(L.LightningDataModule):
 
     def __init__(self,
                  db_path: Path,
@@ -37,6 +37,7 @@ class DuckDBDeepONetRingerDataset(DuckDBDataset):
                  label_col: str,
                  batch_size: int):
 
+        self.db_path = db_path
         self.table_name = table_name
         self.ring_col = ring_col
         self.et_col = et_col
@@ -45,58 +46,48 @@ class DuckDBDeepONetRingerDataset(DuckDBDataset):
         self.fold_col = fold_col
         self.fold = fold
         self.label_col = label_col
+        self.batch_size = batch_size
+
         self.rings = [f'{self.ring_col}[{i}]' for i in range(1, N_RINGS+1)]
-
-        with duckdb.connect(db_path) as conn:
-            self.train_df = conn.execute(self.get_train_query()).pl()
-            self.val_df = conn.execute(self.get_val_query()).pl()
-
-        abs_eta = self.train_df[self.eta_col].abs()
-        to_scale = [
+        self.branch_input = self.rings
+        self.to_scale = [
             self.et_col,
             self.eta_col,
             self.pileup_col
         ]
-        for
-        scaler_params = {
-            'mean': {
-                self.train_df[self.et_col].mean(),
-                abs_eta.mean(),
-                self.train_df[self.pileup_col].mean(),
-            },
-            'std': {
-                self.train_df[self.et_col].std(),
-                abs_eta.std(),
-                self.train_df[self.pileup_col].std(),
-            }
+        self.trunk_input = self.to_scale
+
+        self.train_query = f"""
+        SELECT {self.et_col}, {self.eta_col}, {self.pileup_col}, {', '.join(self.rings)}, {self.label_col}
+        FROM {self.table_name}
+        WHERE {self.fold_col} != {self.fold} AND {self.fold_col} >= 0;"""
+
+        self.val_query = f"""
+        SELECT {self.et_col}, {self.eta_col}, {self.pileup_col}, {', '.join(self.rings)}, {self.label_col}
+        FROM {self.table_name}
+        WHERE {self.fold_col} = {self.fold};"""
+
+        with duckdb.connect(self.db_path) as conn:
+            self.train_df = conn.execute(self.train_query).pl().with_columns(
+                pl.col(self.eta_col).abs().alias(self.eta_col)
+            )
+            self.val_df = conn.execute(self.val_query).pl().with_columns(
+                pl.col(self.eta_col).abs().alias(self.eta_col)
+            )
+
+        self.scaler_params = {
+            'mean': {},
+            'std': {}
         }
+        for col_name in self.to_scale:
+            col = self.train_df[col_name]
+            mean = col.mean()
+            std = col.std()
+            self.scaler_params['mean'][col_name] = mean
+            self.scaler_params['std'][col_name] = std
 
-        self.train_df.with_columns([
-            (pl.col(self.et_col) - .alias(self.et_col),
-        ])
-
-        with duckdb.connect(db_path) as conn:
-            create_ringer_l1_macro(conn)
-            params = conn.sql(STANDARD_SCALER_QUERY.format(
-                et_col=self.et_col,
-                eta_col=self.eta_col,
-                pileup_col=self.pileup_col,
-                table_name=self.table_name,
-                fold_col=self.fold_col,
-                fold=self.fold
-            )).to_df().iloc[0].to_dict()
-            self.standard_scaler_params = {}
-            for key, value in params.items():
-                key = key.replace('mean_', 'mean.').replace('std_', 'std.')
-                self.standard_scaler_params[key] = value
-            self.standard_scaler_params = unflatten_dict(self.standard_scaler_params)
-
-        super().__init__(
-            db_path=db_path,
-            batch_size=batch_size,
-            train_query=self.get_train_query(),
-            val_query=self.get_val_query()
-        )
+        self.train_df = self.preprocess_df(self.train_df)
+        self.val_df = self.preprocess_df(self.val_df)
 
     @cached_property
     def balanced_class_weights(self) -> list[float]:
@@ -111,50 +102,64 @@ class DuckDBDeepONetRingerDataset(DuckDBDataset):
             Class weights for each class.
         """
         with duckdb.connect(self.db_path) as conn:
-            label_count = conn.execute(
-                f"SELECT {self.label_col} as label, COUNT({self.label_col}) as bincount FROM {self.table_name} GROUP BY {self.label_col} HAVING {self.fold_col} != {self.fold} AND {self.fold_col} >= 0"
-            ).df().sort_values(by='label')
-            n_samples = label_count['bincount'].sum()
-            n_classes = len(label_count)
-            weights = [float(n_samples / (n_classes * count))
-                       for count in label_count['bincount']]
-            return weights
+            return get_balanced_class_weights(
+                conn,
+                self.table_name,
+                self.label_col,
+                filter=f'{self.fold_col} != {self.fold} AND {self.fold_col} >= 0'
+            )
 
-    def get_standard_scaled_col(self, col_name: str) -> str:
-        res = f"({col_name} - {self.standard_scaler_params['mean'][col_name]}) / NULLIF({self.standard_scaler_params['std'][col_name]}, 0) as {col_name}"
-        return res
+    def preprocess_df(self, df: pl.DataFrame) -> pl.DataFrame:
+        for col_name in self.to_scale:
+            mean = self.scaler_params['mean'][col_name]
+            std = self.scaler_params['std'][col_name]
+            df = df.with_columns(
+                ((pl.col(col_name) - mean) / std)
+                .alias(col_name))
+        ring_norms = df[self.rings].sum_horizontal().abs()
+        ring_norms[ring_norms == 0] = 1
+        df[self.rings] = df[self.rings] / ring_norms
+        return df
 
-    def get_train_query(self) -> str:
-        rings = [f'{self.ring_col}[{i}]' for i in range(1, N_RINGS+1)]
-        return f"""
-        SELECT {self.et_col}, {self.eta_col}, {self.pileup_col}, {', '.join(rings)}, {self.label_col}
-        FROM {self.table_name}
-        WHERE {self.fold_col} != {self.fold} AND {self.fold_col} >= 0;"""
+    def get_dataloader(self, df: pl.DataFrame) -> torch.utils.data.DataLoader:
 
-        # normalized_rings = [
-        #     f'{self.ring_col}[{i}]/norm as ring_{i}' for i in range(1, N_RINGS+1)
-        # ]
-        # return (f"SELECT {self.get_standard_scaled_col(self.et_col)} as {self.et_col}, " +
-        #         f"{self.get_standard_scaled_col(self.eta_col)} as {self.eta_col}, " +
-        #         f"{self.get_standard_scaled_col(self.pileup_col)} as {self.pileup_col}, " +
-        #         f"ringer_l1({self.ring_col}) as norm, " +
-        #         f"{', '.join(normalized_rings)}, " +
-        #         f"{self.label_col} " +
-        #         f"FROM {self.table_name} WHERE {self.fold_col} != {self.fold} AND {self.fold_col} >= 0")
+        dataset = torch.utils.data.TensorDataset(
+            df[self.branch_input].to_torch(),
+            df[self.trunk_input].to_torch(),
+            df[self.label_col].to_torch()
+        )
+        return torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
-    def get_val_query(self) -> str:
-        rings = [f'{self.ring_col}[{i}]' for i in range(1, N_RINGS+1)]
-        return f"""
-        SELECT {self.et_col}, {self.eta_col}, {self.pileup_col}, {', '.join(rings)}, {self.label_col}
-        FROM {self.table_name}
-        WHERE {self.fold_col} = {self.fold};"""
-        # normalized_rings = [
-        #     f'{self.ring_col}[{i}]/norm as ring_{i}' for i in range(1, N_RINGS+1)
-        # ]
-        # return (f"SELECT {self.get_standard_scaled_col(self.et_col)}, " +
-        #         f"{self.get_standard_scaled_col(self.eta_col)}, " +
-        #         f"{self.get_standard_scaled_col(self.pileup_col)}, " +
-        #         f"ringer_l1({self.ring_col}) as norm, " +
-        #         f"{', '.join(normalized_rings)}, " +
-        #         f"{self.label_col} " +
-        #         f"FROM {self.table_name} WHERE {self.fold_col} = {self.fold}")
+    def train_dataloader(self):
+        return self.get_dataloader(self.train_df)
+
+    def val_dataloader(self):
+        return self.get_dataloader(self.val_df)
+
+    # def _get_mlflow_dataset(self, query: str, name: str | None = None):
+    #     X, y = self.get_df_from_query(query, limit=10)
+
+    #     # Casting to ensure mlflow knows how to log the dataset
+    #     X = X.to_pandas(use_pyarrow_extension_array=True)
+    #     for dtype in X.dtypes.values:
+    #         if str(dtype) == 'object':
+    #             X = X.convert_dtypes(dtype_backend='pyarrow')
+    #             break
+    #     y = y.to_pandas(use_pyarrow_extension_array=True)
+    #     for dtype in y.dtypes.values:
+    #         if str(dtype) == 'object':
+    #             y = y.convert_dtypes(dtype_backend='pyarrow')
+    #             break
+
+    #     df = pd.concat([X, y], axis=1)
+    #     if name is None:
+    #         name = self.db_path.stem
+    #     dataset = mlflow.data.from_pandas(
+    #         df,
+    #         source=str(self.db_path),
+    #         name=name,
+    #         targets=','.join(y.columns.tolist()),
+    #     )
+    #     return dataset
+
+    # def log_inputs_to_mlflow(self):

@@ -295,7 +295,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
 
         exec_start = datetime.now(timezone.utc).timestamp()
         mlflow.log_metric('exec_start', exec_start)
-        self.datamodule.log_to_mlflow()
+        # self.datamodule.log_to_mlflow()
         mlflow.log_param("class_weights", json.dumps(self.datamodule.balanced_class_weights))
 
         self.model = MLPUnstackedDeepONetBinaryClassifier(
@@ -305,11 +305,6 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             trunk_activations=self.trunk_activations,
             class_weights=self.datamodule.balanced_class_weights
         )
-
-        train_X, train_y = self.datamodule.train_df()
-        train_X = train_X.to_numpy()
-        train_y = train_y.to_numpy()
-        logging.info('Fitting Kmeans')
 
         logger = MLFlowLogger(
             experiment_name=experiment_name,
