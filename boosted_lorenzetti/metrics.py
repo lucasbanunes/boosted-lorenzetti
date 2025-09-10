@@ -197,6 +197,7 @@ class MaxSPMetrics(BinaryROC):
 
     def compute(self):
         fpr, tpr, thresh = super().compute()
+        auc = torch.trapezoid(tpr, fpr)
         sp = sp_index_pytorch(tpr, fpr)
         max_sp_index = sp.argmax()
         sp = sp[max_sp_index]
@@ -208,7 +209,6 @@ class MaxSPMetrics(BinaryROC):
         fn = (1 - tpr) * self.positives
         thresh = thresh[max_sp_index]
         acc = (tp + tn) / (tp + tn + fp + fn)
-        auc = torch.trapezoid(tpr, fpr)
         return acc, sp, auc, fpr, tpr, tp, tn, fp, fn, thresh
 
     def compute_arrays(self):

@@ -1042,6 +1042,7 @@ CREATE TABLE data (
     cl_lambdaCenter FLOAT,
     cl_fracMax FLOAT,
     cl_lateralMom FLOAT,
+    label TINYINT NOT NULL
 );
 """
 
@@ -1086,7 +1087,8 @@ SELECT
     {db_name}.clusters.secondR as cl_secondR,
     {db_name}.clusters.lambdaCenter as cl_lambdaCenter,
     {db_name}.clusters.fracMax as cl_fracMax,
-    {db_name}.clusters.lateralMom as cl_lateralMom
+    {db_name}.clusters.lateralMom as cl_lateralMom,
+    {label} as label
 FROM {db_name}.events
     LEFT JOIN {db_name}.clusters ON {db_name}.events.id = {db_name}.clusters.event_id;
 """
@@ -1149,7 +1151,7 @@ def create_ringer_dataset(
             conn.execute(
                 f"ATTACH DATABASE '{input_db}' AS {metadata['name']};")
             formated_select_query = SELECT_RINGER_DATASET_DATA_TABLE_QUERY.format(
-                source_id=source_id, db_name=metadata['name'])
+                source_id=source_id, db_name=metadata['name'], label=label)
             conn.execute(f"INSERT INTO data BY NAME {formated_select_query};")
 
         bl_duckdb.add_metadata_table(conn,

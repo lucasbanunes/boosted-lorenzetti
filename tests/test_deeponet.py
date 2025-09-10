@@ -13,10 +13,10 @@ def test_deeponet_training_job(test_dataset_path: Path):
         eta_col='cl_eta',
         pileup_col='avgmu',
         fold=0,
-        branch_dims='100, 2, 1',
-        branch_activations='relu, None',
-        trunk_dims='3, 2, 1',
-        trunk_activations='relu, None',
+        branch_dims='100, 2',
+        branch_activations='relu',
+        trunk_dims='3, 1',
+        trunk_activations='relu',
         experiment_name=experiment_name
     )
 

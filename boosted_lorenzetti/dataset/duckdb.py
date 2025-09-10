@@ -543,30 +543,30 @@ def add_kfold(
         random_state = seed_factory()
     with duckdb.connect(db_path) as conn:
         logging.info('Selecting data from database')
-        relation = conn.from_query(
-            f'SELECT {id_col}, {label_col} FROM {src_table};')
+        relation = conn.table(src_table)
         if filter_cond:
             relation = relation.filter(filter_cond)
+        relation = relation.select(f"{id_col}, {label_col}")
         label_df = relation.pl()
-        new_col = np.full(len(label_df), -1, dtype=np.int8)
-        kf = StratifiedKFold(
-            n_splits=n_folds, shuffle=shuffle, random_state=random_state)
-        x_placeholder = np.full(len(label_df), 0, dtype=np.int8)
-        logging.info('Creating KFold splits')
-        for fold, (_, val_idx) in enumerate(kf.split(x_placeholder, label_df[label_col].to_numpy())):
-            new_col[val_idx] = fold
-        label_df = label_df.with_columns(pl.Series(fold_col, new_col))
-        del new_col, x_placeholder
-        label_df.drop_in_place(label_col)
-        logging.info('Writing data to database')
+    new_col = np.full(len(label_df), -1, dtype=np.int8)
+    kf = StratifiedKFold(
+        n_splits=n_folds, shuffle=shuffle, random_state=random_state)
+    x_placeholder = np.full(len(label_df), 0, dtype=np.int8)
+    logging.info('Creating KFold splits')
+    with duckdb.connect(db_path) as conn:
+        conn.execute(f"ALTER TABLE {src_table} ADD COLUMN {fold_col} TINYINT DEFAULT -1;")
+    for fold, (_, val_idx) in enumerate(kf.split(x_placeholder, label_df[label_col].to_numpy())):
+        new_col[val_idx] = fold
+    label_df = label_df.with_columns(pl.Series(fold_col, new_col))
+    del new_col, x_placeholder
+    label_df.drop_in_place(label_col)
+    logging.info('Writing data to database')
+    with duckdb.connect(db_path) as conn:
         conn.execute(f"""
-            BEGIN TRANSACTION;
-            ALTER TABLE {src_table} ADD COLUMN {fold_col} TINYINT DEFAULT -1;
             UPDATE {src_table}
             SET {fold_col} = label_df.{fold_col}
             FROM label_df
             WHERE {src_table}.{id_col} = label_df.{id_col};
-            COMMIT;
         """)
 
 

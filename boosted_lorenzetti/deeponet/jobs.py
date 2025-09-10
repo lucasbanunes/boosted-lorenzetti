@@ -310,7 +310,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             experiment_name=experiment_name,
             run_name=self.name,
             tracking_uri=tracking_uri,
-            run_id=self.run_id
+            run_id=self.id_
         )
 
         checkpoint = ModelCheckpoint(
@@ -349,7 +349,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             "fit_duration", (fit_end - fit_start).total_seconds())
         logging.info('Training completed.')
 
-        best_model = type(self.model).load_from_checkpoint(
+        best_model = MLPUnstackedDeepONetBinaryClassifier.load_from_checkpoint(
             checkpoint.best_model_path
         )
         log_path = tmp_dir / 'model.ckpt'
@@ -359,20 +359,26 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             pytorch_model=best_model,
             name="model",
         )
-        onnx_path = tmp_dir / 'model.onnx'
-        best_model.to_onnx(onnx_path, export_params=True)
-        mlflow.log_artifact(str(onnx_path))
+        # onnx_path = tmp_dir / 'model.onnx'
+        # best_model.to_onnx(onnx_path,
+        #                    export_params=True,
+        #                    input_sample=best_model.example_input_array,
+        #                    opset_version=12,
+        #                    do_constant_folding=True,
+        #                    input_names=['branch_input', 'trunk_input'],
+        #                    output_names=['output'])
+        # mlflow.log_artifact(str(onnx_path))
         logging.info('Training completed and model logged to MLFlow.')
         shutil.rmtree(str(self.checkpoints_dir))
 
         dataloaders = {
             'train': self.datamodule.train_dataloader(),
         }
-        if self.datamodule.val_query:
+        if hasattr(self.datamodule, 'val_dataloader'):
             dataloaders['val'] = self.datamodule.val_dataloader()
-        if self.datamodule.test_query:
+        if hasattr(self.datamodule, 'test_dataloader'):
             dataloaders['test'] = self.datamodule.test_dataloader()
-        if self.datamodule.predict_query:
+        if hasattr(self.datamodule, 'predict_dataloader'):
             dataloaders['predict'] = self.datamodule.predict_dataloader()
 
         for dataset_type, dataloader in dataloaders.items():

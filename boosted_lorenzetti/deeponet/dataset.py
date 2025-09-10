@@ -37,6 +37,7 @@ class DuckDBDeepONetRingerDataset(L.LightningDataModule):
                  label_col: str,
                  batch_size: int):
 
+        super().__init__()
         self.db_path = db_path
         self.table_name = table_name
         self.ring_col = ring_col
@@ -124,8 +125,8 @@ class DuckDBDeepONetRingerDataset(L.LightningDataModule):
     def get_dataloader(self, df: pl.DataFrame) -> torch.utils.data.DataLoader:
 
         dataset = torch.utils.data.TensorDataset(
-            df[self.branch_input].to_torch(),
-            df[self.trunk_input].to_torch(),
+            df[self.branch_input].to_torch(dtype=pl.Float32),
+            df[self.trunk_input].to_torch(dtype=pl.Float32),
             df[self.label_col].to_torch()
         )
         return torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
