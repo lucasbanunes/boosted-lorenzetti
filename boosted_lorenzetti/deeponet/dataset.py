@@ -137,30 +137,5 @@ class DuckDBDeepONetRingerDataset(L.LightningDataModule):
     def val_dataloader(self):
         return self.get_dataloader(self.val_df)
 
-    # def _get_mlflow_dataset(self, query: str, name: str | None = None):
-    #     X, y = self.get_df_from_query(query, limit=10)
-
-    #     # Casting to ensure mlflow knows how to log the dataset
-    #     X = X.to_pandas(use_pyarrow_extension_array=True)
-    #     for dtype in X.dtypes.values:
-    #         if str(dtype) == 'object':
-    #             X = X.convert_dtypes(dtype_backend='pyarrow')
-    #             break
-    #     y = y.to_pandas(use_pyarrow_extension_array=True)
-    #     for dtype in y.dtypes.values:
-    #         if str(dtype) == 'object':
-    #             y = y.convert_dtypes(dtype_backend='pyarrow')
-    #             break
-
-    #     df = pd.concat([X, y], axis=1)
-    #     if name is None:
-    #         name = self.db_path.stem
-    #     dataset = mlflow.data.from_pandas(
-    #         df,
-    #         source=str(self.db_path),
-    #         name=name,
-    #         targets=','.join(y.columns.tolist()),
-    #     )
-    #     return dataset
-
-    # def log_inputs_to_mlflow(self):
+    def predict_dataloader(self):
+        return self.get_dataloader(pl.concat([self.train_df, self.val_df], how='vertical'))

@@ -4,11 +4,8 @@ import torch.nn as nn
 from typing import Tuple, List
 import pandas as pd
 from torchmetrics import MetricCollection
-from pathlib import Path
-import mlflow
-import plotly.express as px
 
-from ..metrics import MaxSPMetrics, BCEWithLogitsLossMetric
+from ..metrics import MaxSPMetrics, BCELossMetric
 from ..mlp.models import build_mlp
 
 
@@ -23,13 +20,11 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
         super().__init__()
         self.branch_net = branch_net
         self.trunk_net = trunk_net
-        self.criterion = torch.nn.CrossEntropyLoss()
         self.loss_func = nn.BCEWithLogitsLoss(reduction='none')
         self.example_input_array = [
             self.branch_net.example_input_array,
             self.trunk_net.example_input_array
         ]
-        self.example_input_df = None
         self.learning_rate = learning_rate
 
         if class_weights is None:
@@ -47,7 +42,7 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
             'max_sp': MaxSPMetrics(
                 thresholds=100
             ),
-            'loss': BCEWithLogitsLossMetric()
+            'loss': BCELossMetric()
         })
 
     def forward(self, branch_input: torch.Tensor, trunk_input: torch.Tensor) -> torch.Tensor:
@@ -137,11 +132,7 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
         )
         return optimizer
 
-    def log_test_metrics(self,
-                         tmp_dir: Path,
-                         prefix: str = 'test.'):
-        if tmp_dir is None:
-            tmp_dir = Path("tmp")
+    def compute_test_metrics(self):
 
         # Log metrics to MLflow
         computed_metrics = self.test_metrics.compute()
@@ -149,65 +140,22 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
         acc, sp, auc, fpr, tpr, tp, tn, fp, fn, thresh = \
             computed_metrics['max_sp']
         metrics = {
-            'loss': loss,
-            'acc': acc,
-            'sp': sp,
-            'fpr': fpr,
-            'tpr': tpr,
-            'tp': tp,
-            'tn': tn,
-            'fp': fp,
-            'fn': fn,
-            'thresh': thresh
+            'loss': float(loss),
+            'max_sp_acc': float(acc),
+            'max_sp': float(sp),
+            'max_sp_fpr': float(fpr),
+            'max_sp_tpr': float(tpr),
+            'max_sp_tp': int(tp),
+            'max_sp_tn': int(tn),
+            'max_sp_fp': int(fp),
+            'max_sp_fn': int(fn),
+            'max_sp_thresh': float(thresh),
+            'roc_auc': float(auc)
         }
-        mlflow.log_metric(f"{prefix}loss", loss)
-        mlflow.log_metric(f"{prefix}max_sp_acc", acc)
-        mlflow.log_metric(f"{prefix}max_sp_sp", sp)
-        mlflow.log_metric(f"{prefix}auc", auc)
-        mlflow.log_metric(f"{prefix}max_sp_fpr", fpr)
-        mlflow.log_metric(f"{prefix}max_sp_tpr", tpr)
-        mlflow.log_metric(f"{prefix}max_sp_tp", tp)
-        mlflow.log_metric(f"{prefix}max_sp_tn", tn)
-        mlflow.log_metric(f"{prefix}max_sp_fp", fp)
-        mlflow.log_metric(f"{prefix}max_sp_fn", fn)
-        mlflow.log_metric(f"{prefix}max_sp_thresh", thresh)
 
         df = pd.DataFrame.from_dict(self.test_metrics['max_sp'].compute_arrays())
-        df_path = tmp_dir / f'{prefix}metrics.csv'
-        df.to_csv(df_path, index=False)
-        mlflow.log_artifact(str(df_path))
 
-        roc_curve_artifact = f'{prefix}roc_curve.html'
-        roc_fig = px.line(
-            df.sort_values('fpr'),
-            x='fpr',
-            y='tpr',
-        )
-        roc_fig.update_layout(
-            title=f'ROC Curve (AUC {auc:.2f})',
-            xaxis_title='False Positive Rate',
-            yaxis_title='True Positive Rate'
-        )
-        mlflow.log_figure(roc_fig, roc_curve_artifact)
-
-        tpr_fpr_artifact = f'{prefix}tpr_fpr.html'
-        tpr_fpr_fig = px.line(
-            df.sort_values('thresholds'),
-            x='thresholds',
-            y=['tpr', 'fpr'],
-        )
-        tpr_fpr_fig.update_layout(
-            title='TPR and FPR vs Thresholds',
-            xaxis_title='Thresholds',
-            yaxis_title='Rate',
-            legend_title='Rate Type',
-            legend=dict(
-                title_text='Variable'
-            )
-        )
-        mlflow.log_figure(tpr_fpr_fig, tpr_fpr_artifact)
-
-        return metrics, df, roc_fig, tpr_fpr_fig
+        return metrics, df
 
 
 class MLPUnstackedDeepONetBinaryClassifier(UnstackedDeepONetBinaryClassifier):

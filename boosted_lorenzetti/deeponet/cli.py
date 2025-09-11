@@ -82,7 +82,7 @@ def create_training(
     patience: types.PatienceType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['patience'].default,
     checkpoints_dir: types.CheckpointsDirType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['checkpoints_dir'].default,
     max_epochs: types.MaxEpochsType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['max_epochs'].default,
-    monitor: deeponet_jobs.MonitorOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['monitor'].default,
+    monitor: types.MonitorOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['monitor'].default,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 ):
@@ -132,19 +132,11 @@ def create_training(
     return run_id
 
 
-RUN_IDS_OPTION_HELP = "List of run IDs to execute"
-RunIdsOption = Annotated[
-    str,
-    typer.Option(
-        help=RUN_IDS_OPTION_HELP)
-]
-
-
 @mlp_app.command(
     help='Run a training job given its MLFlow run ID'
 )
 def run_training(
-    run_ids: RunIdsOption,
+    run_ids: types.RunIdsListOptionType,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 ):

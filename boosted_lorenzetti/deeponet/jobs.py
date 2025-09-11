@@ -1,5 +1,5 @@
 from functools import cached_property
-from typing import Literal, List, Dict, Any, Annotated
+from typing import Literal, List, Dict, Any, Annotated, ClassVar
 from pathlib import Path
 import mlflow
 from pydantic import ConfigDict, Field
@@ -12,7 +12,6 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 import shutil
 import pandas as pd
-import plotly.graph_objects as go
 import typer
 
 from .dataset import DuckDBDeepONetRingerDataset
@@ -178,20 +177,11 @@ LearningRateOptionField = Annotated[
     )
 ]
 
-MONITOR_OPTION_FIELD_HELP = "Metric to monitor for early stopping and checkpointing."
-MonitorOptionField = Annotated[
-    str,
-    Field(
-        description=MONITOR_OPTION_FIELD_HELP,
-        example="val_max_sp"
-    ),
-    typer.Option(
-        help=MONITOR_OPTION_FIELD_HELP,
-    )
-]
-
 
 class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
+
+    METRICS_DICT_PATH: ClassVar[str] = 'metrics.json'
+    METRICS_DF_PATH_FORMAT: ClassVar[str] = '{dataset_type}_metrics.csv'
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -216,13 +206,11 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
     patience: types.PatienceType = 10
     checkpoints_dir: types.CheckpointsDirType = Path('checkpoints/')
     max_epochs: types.MaxEpochsType = 3
-    monitor: MonitorOptionField = 'val_max_sp'
+    monitor: types.MonitorOptionField = 'val_max_sp'
 
     model: MLPUnstackedDeepONetBinaryClassifier | None = None
     metrics: Dict[str, Any] = {}
     metrics_dfs: Dict[str, pd.DataFrame] = {}
-    roc_figs: Dict[str, go.Figure] = {}
-    tpr_fpr_figs: Dict[str, go.Figure] = {}
 
     @cached_property
     def datamodule(self) -> DuckDBDataset:
@@ -287,6 +275,20 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
         )
         return cls(**kwargs)
 
+    def log_class_weights(self):
+        mlflow.log_param("class_weights", json.dumps(self.datamodule.balanced_class_weights))
+
+    def log_metrics(self, prefix: str = ''):
+        for dataset_type, metrics in self.metrics.items():
+            for key, value in metrics.items():
+                mlflow.log_metric(f"{prefix}{dataset_type}.{key}", value)
+
+    def log_metrics_dfs(self, tmp_dir: Path):
+        for dataset_type in self.metrics_dfs.keys():
+            metrics_df_path = tmp_dir / self.METRICS_DF_PATH_FORMAT.format(dataset_type=dataset_type)
+            self.metrics_dfs[dataset_type].to_csv(metrics_df_path, index=False)
+            mlflow.log_artifact(str(metrics_df_path))
+
     def exec(self,
              tmp_dir: Path,
              experiment_name: str,
@@ -295,8 +297,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
 
         exec_start = datetime.now(timezone.utc).timestamp()
         mlflow.log_metric('exec_start', exec_start)
-        # self.datamodule.log_to_mlflow()
-        mlflow.log_param("class_weights", json.dumps(self.datamodule.balanced_class_weights))
+        self.log_class_weights()
 
         self.model = MLPUnstackedDeepONetBinaryClassifier(
             branch_dims=self.branch_dims,
@@ -349,20 +350,20 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             "fit_duration", (fit_end - fit_start).total_seconds())
         logging.info('Training completed.')
 
-        best_model = MLPUnstackedDeepONetBinaryClassifier.load_from_checkpoint(
+        self.model = MLPUnstackedDeepONetBinaryClassifier.load_from_checkpoint(
             checkpoint.best_model_path
         )
         log_path = tmp_dir / 'model.ckpt'
         shutil.copy(checkpoint.best_model_path, log_path)
         mlflow.log_artifact(log_path)
         mlflow.pytorch.log_model(
-            pytorch_model=best_model,
+            pytorch_model=self.model,
             name="model",
         )
         # onnx_path = tmp_dir / 'model.onnx'
-        # best_model.to_onnx(onnx_path,
+        # self.model.to_onnx(onnx_path,
         #                    export_params=True,
-        #                    input_sample=best_model.example_input_array,
+        #                    input_sample=self.model.example_input_array,
         #                    opset_version=12,
         #                    do_constant_folding=True,
         #                    input_names=['branch_input', 'trunk_input'],
@@ -373,13 +374,9 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
 
         dataloaders = {
             'train': self.datamodule.train_dataloader(),
+            'val': self.datamodule.val_dataloader(),
+            'predict': self.datamodule.predict_dataloader()
         }
-        if hasattr(self.datamodule, 'val_dataloader'):
-            dataloaders['val'] = self.datamodule.val_dataloader()
-        if hasattr(self.datamodule, 'test_dataloader'):
-            dataloaders['test'] = self.datamodule.test_dataloader()
-        if hasattr(self.datamodule, 'predict_dataloader'):
-            dataloaders['predict'] = self.datamodule.predict_dataloader()
 
         for dataset_type, dataloader in dataloaders.items():
             logging.info(f'Evaluating best model on {dataset_type} dataset')
@@ -387,12 +384,9 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
                 model=self.model,
                 dataloaders=dataloader
             )
-            metrics, metrics_df, roc_fig, tpr_fpr_fig = \
-                self.model.log_test_metrics(tmp_dir, prefix=f'{dataset_type}.')
+            metrics, metrics_df = self.model.compute_test_metrics()
             self.metrics[dataset_type] = metrics
             self.metrics_dfs[dataset_type] = metrics_df
-            self.roc_figs[dataset_type] = roc_fig
-            self.tpr_fpr_figs[dataset_type] = tpr_fpr_fig
             self.model.test_metrics.reset()
 
         end_start = datetime.now(timezone.utc).timestamp()

@@ -34,7 +34,6 @@ class TrainingJob(MLFlowLoggedJob):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     MODEL_CKPT_PATH: ClassVar[str] = 'model.ckpt'
-    METRICS_DICT_PATH: ClassVar[str] = 'metrics.json'
     METRICS_DF_PATH_FORMAT: ClassVar[str] = '{dataset_type}_metrics.csv'
     ROC_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_roc_curve.html'
     TPR_FPR_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_tpr_fpr_curve.html'
