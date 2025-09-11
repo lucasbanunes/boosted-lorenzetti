@@ -1,4 +1,4 @@
-from boosted_lorenzetti.models import mlp
+from boosted_lorenzetti.mlp.cli import create_training, run_training, create_kfold, run_kfold
 from pathlib import Path
 
 from boosted_lorenzetti.constants import N_RINGS
@@ -13,7 +13,7 @@ def test_full_training(test_dataset_path: Path):
     train_query = f"SELECT {query_cols_str} FROM data WHERE fold != 0;"
     val_query = f"SELECT {query_cols_str} FROM data WHERE fold = 0;"
 
-    run_id = mlp.create_training(
+    run_id = create_training(
         db_path=test_dataset_path,
         train_query=train_query,
         val_query=val_query,
@@ -22,7 +22,7 @@ def test_full_training(test_dataset_path: Path):
         experiment_name=experiment_name
     )
 
-    mlp.run_training(
+    run_training(
         run_ids=run_id,
         experiment_name=experiment_name,
     )
@@ -39,7 +39,7 @@ def test_multiple_trainings(test_dataset_path: Path):
 
     run_ids = []
     run_ids.append(
-        mlp.create_training(
+        create_training(
             db_path=test_dataset_path,
             train_query=train_query,
             val_query=val_query,
@@ -49,7 +49,7 @@ def test_multiple_trainings(test_dataset_path: Path):
         )
     )
     run_ids.append(
-        mlp.create_training(
+        create_training(
             db_path=test_dataset_path,
             train_query=train_query,
             val_query=val_query,
@@ -59,7 +59,7 @@ def test_multiple_trainings(test_dataset_path: Path):
         )
     )
 
-    mlp.run_training(
+    run_training(
         run_ids=run_ids,
         experiment_name=experiment_name,
     )
@@ -68,13 +68,13 @@ def test_multiple_trainings(test_dataset_path: Path):
 def test_kfold_training(test_dataset_path: Path):
     experiment_name = 'test_kfold_training'
 
-    run_id = mlp.create_kfold(
+    run_id = create_kfold(
         db_path=test_dataset_path,
+        ring_col='cl_rings',
         table_name='data',
         dims=[N_RINGS, 1],
-        best_metric='val_max_sp',
+        best_metric='val.max_sp',
         best_metric_mode='max',
-        rings_col='cl_rings',
         label_col='label',
         fold_col='fold',
         folds=5,
@@ -83,7 +83,7 @@ def test_kfold_training(test_dataset_path: Path):
         max_epochs=2,
     )
 
-    mlp.run_kfold(
+    run_kfold(
         run_id=run_id,
         experiment_name=experiment_name,
     )

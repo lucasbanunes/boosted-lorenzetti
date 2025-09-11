@@ -4,7 +4,7 @@ from boosted_lorenzetti.dataset.aod import app as aod_app
 from boosted_lorenzetti.deeponet.cli import app as deeponet_app
 from boosted_lorenzetti.dataset.duckdb import app as duckdb_app
 from boosted_lorenzetti.kmeans.cli import app as kmeans_app
-from boosted_lorenzetti.models.mlp import app as mlp_app
+from boosted_lorenzetti.mlp.cli import app as mlp_app
 from boosted_lorenzetti.dataset.ntuple import app as ntuple_app
 from boosted_lorenzetti.dataset.npz import app as npz_app
 # from boosted_lorenzetti.models.tabcaps import app as tabcaps_app

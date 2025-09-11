@@ -228,11 +228,11 @@ class MaxSPMetrics(BinaryROC):
             'tn': tn,
             'fp': fp,
             'fn': fn,
-            'thresh': thresholds
+            'thresholds': thresholds
         }
 
 
-class BCEWithLogitsLossMetric(Metric):
+class BCELossMetric(Metric):
 
     def __init__(self, reduction: Literal['mean', 'sum'] = 'mean'):
         super().__init__()
@@ -243,10 +243,10 @@ class BCEWithLogitsLossMetric(Metric):
                        dist_reduce_fx='sum')
 
     def update(self, preds: torch.Tensor, target: torch.Tensor):
-        loss = F.binary_cross_entropy_with_logits(
-            preds, target, reduction=self.reduction)
+        loss = F.binary_cross_entropy(
+            preds, target.float(), reduction=self.reduction)
         self.bce_sum += loss
-        self.n_samples += len(preds)
+        self.n_samples += 1
 
     def compute(self) -> torch.Tensor:
         if self.reduction == 'mean':

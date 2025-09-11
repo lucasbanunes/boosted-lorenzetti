@@ -51,7 +51,6 @@ class DuckDBDataset(L.LightningDataModule):
         self.batch_size = batch_size
         self.cache = cache
         self.__clear_cache()
-        self.save_hyperparameters()
 
     def __clear_cache(self):
         self._train_X = None
@@ -244,7 +243,7 @@ class DuckDBDataset(L.LightningDataModule):
         return torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
     def __get_mlflow_dataset(self, query: str, name: str | None = None):
-        X, y = self.get_df_from_query(query, limit=10)
+        X, y = self.get_df_from_query(query)
 
         # Casting to ensure mlflow knows how to log the dataset
         X = X.to_pandas(use_pyarrow_extension_array=True)

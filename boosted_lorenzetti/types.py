@@ -170,7 +170,7 @@ FOLD_DESCRTIPTION = (
     "Fold number for cross-validation."
 )
 
-FoldType = Annotated[
+FoldsType = Annotated[
     int,
     Field(
         description=FOLD_DESCRTIPTION
@@ -303,5 +303,29 @@ BestMetricModeType = Annotated[
     typer.Option(
         "--best-metric-mode",
         help=BEST_METRIC_MODE_DESCRIPTION,
+    )
+]
+
+MONITOR_OPTION_FIELD_HELP = "Metric to monitor for early stopping and checkpointing."
+MonitorOptionField = Annotated[
+    str,
+    Field(
+        description=MONITOR_OPTION_FIELD_HELP,
+        example="val_max_sp"
+    ),
+    typer.Option(
+        help=MONITOR_OPTION_FIELD_HELP,
+    )
+]
+
+RUN_IDS_LIST_OPTION_TYPE_HELP = 'List of MLFlow run IDs to run'
+RunIdsListOptionType = Annotated[
+    List[str],
+    Field(
+        description=RUN_IDS_LIST_OPTION_TYPE_HELP
+    ),
+    typer.Option(
+        "--run-ids",
+        help=RUN_IDS_LIST_OPTION_TYPE_HELP,
     )
 ]
