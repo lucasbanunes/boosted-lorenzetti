@@ -94,10 +94,6 @@ class MLP(L.LightningModule):
         self.log("train_roc_auc", batch_values[2], on_epoch=True, prog_bar=True)
         self.log("train_max_sp_fpr", batch_values[3], on_epoch=True)
         self.log("train_max_sp_tpr", batch_values[4], on_epoch=True)
-        self.log("train_max_sp_tp", batch_values[5], on_epoch=True)
-        self.log("train_max_sp_tn", batch_values[6], on_epoch=True)
-        self.log("train_max_sp_fp", batch_values[7], on_epoch=True)
-        self.log("train_max_sp_fn", batch_values[8], on_epoch=True)
         self.log("train_max_sp_thresh", batch_values[9], on_epoch=True)
 
         return loss
@@ -123,10 +119,6 @@ class MLP(L.LightningModule):
         self.log("val_roc_auc", metric_values[2], on_epoch=True, prog_bar=True)
         self.log("val_max_sp_fpr", metric_values[3], on_epoch=True)
         self.log("val_max_sp_tpr", metric_values[4], on_epoch=True)
-        self.log("val_max_sp_tp", metric_values[5], on_epoch=True)
-        self.log("val_max_sp_tn", metric_values[6], on_epoch=True)
-        self.log("val_max_sp_fp", metric_values[7], on_epoch=True)
-        self.log("val_max_sp_fn", metric_values[8], on_epoch=True)
         self.log("val_max_sp_thresh", metric_values[9], on_epoch=True)
         # Reset metrics after logging
         self.val_metrics.reset()

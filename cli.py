@@ -24,7 +24,6 @@ app.add_typer(kmeans_app)
 app.add_typer(mlp_app)
 app.add_typer(npz_app)
 app.add_typer(ntuple_app)
-# app.add_typer(tabcaps_app)
 
 
 if __name__ == '__main__':

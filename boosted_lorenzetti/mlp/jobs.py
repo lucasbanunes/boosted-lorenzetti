@@ -20,6 +20,7 @@ import numpy as np
 from pydantic import ConfigDict
 from typing_extensions import TypedDict
 
+
 from .dataset import MLPDataset
 from .models import MLP
 from .. import types
@@ -40,7 +41,7 @@ class TrainingJob(MLFlowLoggedJob):
 
     db_path: Path
     train_query: str
-    dims: types.DimsType
+    dims: types.DimsFieldType
     val_query: str | None = None
     test_query: str | None = None
     predict_query: str | None = None
@@ -137,19 +138,20 @@ class TrainingJob(MLFlowLoggedJob):
         )
 
         checkpoint = ModelCheckpoint(
-            monitor="val_max_sp",  # Monitor a validation metric
+            monitor=self.monitor,  # Monitor a validation metric
             dirpath=self.checkpoints_dir,  # Directory to save checkpoints
             filename='best-model-{epoch:02d}-{val_max_sp:.2f}',
             save_top_k=3,
-            mode="min",  # Save based on minimum validation loss,
+            mode="max",  # Save based on maximum validation accuracy
             save_on_train_epoch_end=False
         )
 
         callbacks = [
             EarlyStopping(
-                monitor="val_max_sp",
+                monitor=self.monitor,
                 patience=self.patience,
-                mode="min"
+                mode="max",
+                min_delta=1e-3
             ),
             checkpoint,
         ]
@@ -159,7 +161,7 @@ class TrainingJob(MLFlowLoggedJob):
             devices=1,
             logger=logger,
             callbacks=callbacks,
-            enable_progress_bar=False,
+            enable_progress_bar=True,
         )
         logging.info('Starting training process...')
         fit_start = datetime.now(timezone.utc)
@@ -310,7 +312,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
 
     db_path: Path
     ring_col: str
-    dims: types.DimsType
+    dims: types.DimsFieldType
     best_metric: types.BestMetricType
     best_metric_mode: types.BestMetricModeType
     fold_col: str = 'fold'
@@ -334,49 +336,52 @@ class KFoldTrainingJob(MLFlowLoggedJob):
     metrics_description: pd.DataFrame | None = None
 
     def model_post_init(self, context):
-        if self.children:
-            return super().model_post_init(context)
-        feature_cols_str = ', '.join([f'{self.ring_col}[{i+1}]' for i in range(N_RINGS)])
-        for init, fold in product(range(self.inits), range(self.folds)):
-            job_checkpoint_dir = self.checkpoints_dir / f'fold_{fold}_init_{init}'
-            job_dict = {
-                'init': init,
-                'fold': fold,
-                'job': TrainingJob(
-                    db_path=self.db_path,
-                    train_query=self.TRAIN_QUERY_TEMPLATE.format(
-                        feature_cols_str=feature_cols_str,
+
+        # if self.n_jobs < 1:
+        #     raise ValueError(f'n_jobs must be at least 1, received {self.n_jobs}')
+
+        if not self.children:
+            feature_cols_str = ', '.join([f'{self.ring_col}[{i+1}]' for i in range(N_RINGS)])
+            for init, fold in product(range(self.inits), range(self.folds)):
+                job_checkpoint_dir = self.checkpoints_dir / f'fold_{fold}_init_{init}'
+                job_dict = {
+                    'init': init,
+                    'fold': fold,
+                    'job': TrainingJob(
+                        db_path=self.db_path,
+                        train_query=self.TRAIN_QUERY_TEMPLATE.format(
+                            feature_cols_str=feature_cols_str,
+                            label_col=self.label_col,
+                            table_name=self.table_name,
+                            fold_col=self.fold_col,
+                            fold=fold
+                        ),
+                        val_query=self.VAL_QUERY_TEMPLATE.format(
+                            feature_cols_str=feature_cols_str,
+                            label_col=self.label_col,
+                            table_name=self.table_name,
+                            fold_col=self.fold_col,
+                            fold=fold
+                        ),
+                        predict_query=self.PREDICT_QUERY_TEMPLATE.format(
+                            feature_cols_str=feature_cols_str,
+                            label_col=self.label_col,
+                            table_name=self.table_name,
+                            fold_col=self.fold_col,
+                        ),
+                        dims=self.dims,
                         label_col=self.label_col,
-                        table_name=self.table_name,
-                        fold_col=self.fold_col,
-                        fold=fold
-                    ),
-                    val_query=self.VAL_QUERY_TEMPLATE.format(
-                        feature_cols_str=feature_cols_str,
-                        label_col=self.label_col,
-                        table_name=self.table_name,
-                        fold_col=self.fold_col,
-                        fold=fold
-                    ),
-                    predict_query=self.PREDICT_QUERY_TEMPLATE.format(
-                        feature_cols_str=feature_cols_str,
-                        label_col=self.label_col,
-                        table_name=self.table_name,
-                        fold_col=self.fold_col,
-                    ),
-                    dims=self.dims,
-                    label_col=self.label_col,
-                    activation=self.activation,
-                    batch_size=self.batch_size,
-                    name=f'{self.name} - fold {fold} - init {init}',
-                    accelerator=self.accelerator,
-                    patience=self.patience,
-                    checkpoints_dir=job_checkpoint_dir,
-                    max_epochs=self.max_epochs,
-                    monitor=self.monitor
-                )
-            }
-            self.children.append(job_dict)
+                        activation=self.activation,
+                        batch_size=self.batch_size,
+                        name=f'{self.name} - fold {fold} - init {init}',
+                        accelerator=self.accelerator,
+                        patience=self.patience,
+                        checkpoints_dir=job_checkpoint_dir,
+                        max_epochs=self.max_epochs,
+                        monitor=self.monitor
+                    )
+                }
+                self.children.append(job_dict)
         return super().model_post_init(context)
 
     def _to_mlflow(self):
@@ -398,6 +403,13 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         mlflow.log_param('checkpoints_dir', str(self.checkpoints_dir))
         mlflow.log_param('max_epochs', self.max_epochs)
         mlflow.log_param('monitor', self.monitor)
+        for child in self.children:
+            tags = {
+                'fold': str(child['fold']),
+                'init': str(child['init']),
+            }
+            child['job'].to_mlflow(nested=True, tags=tags)
+        # mlflow.log_param('n_jobs', self.n_jobs)
 
     @classmethod
     def _from_mlflow_run(cls, run) -> 'TrainingJob':
@@ -421,6 +433,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             checkpoints_dir=run.data.params['checkpoints_dir'],
             max_epochs=run.data.params['max_epochs'],
             monitor=run.data.params['monitor'],
+            # n_jobs=run.data.params['n_jobs']
         )
         if boosted_mlflow.artifact_exists(run_id, cls.METRICS_PATH):
             kwargs['metrics'] = boosted_mlflow.load_mlflow_csv(run_id,
@@ -428,6 +441,23 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         if boosted_mlflow.artifact_exists(run_id, cls.METRICS_DESCRIPTION_PATH):
             kwargs['metrics_description'] = boosted_mlflow.load_mlflow_csv(run_id,
                                                                            cls.METRICS_DESCRIPTION_PATH)
+
+        client = mlflow.MlflowClient()
+        children_runs = client.search_runs(
+            experiment_ids=[run.info.experiment_id],
+            filter_string=f"tags.mlflow.parentRunId = '{run_id}'",
+            run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
+            max_results=1000
+        )
+        kwargs['children'] = []
+        for child_run in children_runs:
+            kwargs['children'].append(
+                {
+                    'fold': int(child_run.data.tags['fold']),
+                    'init': int(child_run.data.tags['init']),
+                    'job': TrainingJob.from_mlflow_run(child_run)
+                }
+            )
         return cls(**kwargs)
 
     def make_box_plot(self) -> go.Figure:
@@ -478,8 +508,9 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             raise RuntimeError('No child training jobs found.')
 
         metrics = []
-
+        # if self.n_jobs == 1:
         for child in self.children:
+
             child['job'].execute(
                 experiment_name=experiment_name,
                 tracking_uri=tracking_uri,
@@ -491,6 +522,23 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             children_metrics['fold'] = child['fold']
             children_metrics['init'] = child['init']
             metrics.append(children_metrics)
+        # else:
+        #     def run_child(child: KFoldTrainingJobChild) -> Dict[str, Any]:
+        #         child['job'].execute(
+        #             experiment_name=experiment_name,
+        #             tracking_uri=tracking_uri,
+        #             nested=True,
+        #             force=False
+        #         )
+        #         children_metrics = flatten_dict(child['job'].metrics)
+        #         children_metrics['id'] = child['job'].id_
+        #         children_metrics['fold'] = child['fold']
+        #         children_metrics['init'] = child['init']
+        #         return children_metrics
+
+        #     metrics = joblib.Parallel(n_jobs=self.n_jobs)(
+        #         joblib.delayed(run_child)(child) for child in self.children
+        #     )
 
         self.metrics = pd.DataFrame.from_records(metrics)
 

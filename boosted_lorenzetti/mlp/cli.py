@@ -6,9 +6,9 @@ import mlflow
 
 from .. import types
 from .jobs import KFoldTrainingJob, TrainingJob
-from ..utils import set_logger
 
 app = typer.Typer(
+    name='mlp',
     help='Utility for training MLP models on electron classification data.'
 )
 
@@ -19,7 +19,7 @@ app = typer.Typer(
 def create_training(
     db_path: Path,
     train_query: str,
-    dims: types.DimsType,
+    dims: types.DimsOptionType,
     val_query: str | None = None,
     test_query: str | None = None,
     predict_query: str | None = None,
@@ -37,13 +37,15 @@ def create_training(
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 ) -> str:
 
-    set_logger()
     logging.debug('Setting MLFlow tracking URI and experiment name.')
 
     if tracking_uri is None or not tracking_uri:
         tracking_uri = mlflow.get_tracking_uri()
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
+
+    if isinstance(dims, str):
+        dims = [int(dim.strip()) for dim in dims.split(',')]
 
     job = TrainingJob(
         db_path=db_path,
@@ -77,7 +79,6 @@ def run_training(
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 ):
-    set_logger()
     logging.debug(
         f'Tracking URI: {tracking_uri}, Experiment Name: {experiment_name}')
 
@@ -87,7 +88,8 @@ def run_training(
     mlflow.set_experiment(experiment_name)
 
     if isinstance(run_ids, str):
-        run_ids = [run_ids]
+        logging.info(f'Parsing run IDs from string: {run_ids}')
+        run_ids = [id_.strip() for id_ in run_ids.split(',')]
 
     for run_id in run_ids:
         logging.info(f'Running training job with run ID: {run_id}')
@@ -103,8 +105,11 @@ def create_kfold(
     db_path: Annotated[Path, typer.Option(
         help='Path to the DuckDB database file.'
     )],
-    ring_col: str,
-    dims: types.DimsType,
+    ring_col: Annotated[
+        str,
+        typer.Option(help='Name of the column containing the ring data.')
+    ],
+    dims: types.DimsOptionType,
     best_metric: types.BestMetricType,
     best_metric_mode: types.BestMetricModeType,
     fold_col: str = KFoldTrainingJob.model_fields['fold_col'].default,
@@ -123,18 +128,21 @@ def create_kfold(
         'checkpoints_dir'].default,
     max_epochs: types.MaxEpochsType = KFoldTrainingJob.model_fields['max_epochs'].default,
     monitor: types.MonitorOptionField = KFoldTrainingJob.model_fields['monitor'].default,
+    # n_jobs: int = KFoldTrainingJob.model_fields['n_jobs'].default,
     tracking_uri: types.TrackingUriType = None,
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
 
 ) -> str:
 
-    set_logger()
     logging.debug('Setting MLFlow tracking URI and experiment name.')
 
     if tracking_uri is None or not tracking_uri:
         tracking_uri = mlflow.get_tracking_uri()
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
+
+    if isinstance(dims, str):
+        dims = [int(dim.strip()) for dim in dims.split(',')]
 
     job = KFoldTrainingJob(
         db_path=db_path,
@@ -154,7 +162,8 @@ def create_kfold(
         patience=patience,
         checkpoints_dir=checkpoints_dir,
         max_epochs=max_epochs,
-        monitor=monitor
+        monitor=monitor,
+        # n_jobs=n_jobs
     )
 
     run_id = job.to_mlflow()
@@ -172,7 +181,6 @@ def run_kfold(
     experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
     force: str | None = None
 ):
-    set_logger()
     logging.info(f'Running K-Fold training job with run ID: {run_id}')
     logging.debug(
         f'Tracking URI: {tracking_uri}, Experiment Name: {experiment_name}')
@@ -182,8 +190,14 @@ def run_kfold(
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
 
-    job = KFoldTrainingJob.from_mlflow_run_id(run_id)
+    if isinstance(run_id, str):
+        run_id = [id_.strip() for id_ in run_id.split(',')]
 
-    job.execute(experiment_name=experiment_name,
-                tracking_uri=tracking_uri,
-                force=force)
+    for id_ in run_id:
+        logging.info(f'Running K-Fold training job with run ID: {id_}')
+
+        job = KFoldTrainingJob.from_mlflow_run_id(id_)
+
+        job.execute(experiment_name=experiment_name,
+                    tracking_uri=tracking_uri,
+                    force=force)

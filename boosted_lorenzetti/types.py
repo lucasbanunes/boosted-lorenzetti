@@ -65,14 +65,16 @@ BatchSizeType = Annotated[
 
 DIMS_DESCRIPTION = 'Dimensions of the model layers.'
 
-DimsType = Annotated[
+DimsOptionType = Annotated[
+    str,
+    typer.Option(help=DIMS_DESCRIPTION)
+]
+
+DimsFieldType = Annotated[
     List[int],
     Field(
         description=DIMS_DESCRIPTION
     ),
-    typer.Option(
-        help=DIMS_DESCRIPTION,
-    )
 ]
 
 ACTIVATION_DESCRIPTION = (
@@ -176,7 +178,6 @@ FoldsType = Annotated[
         description=FOLD_DESCRTIPTION
     ),
     typer.Option(
-        "--fold",
         help=FOLD_DESCRTIPTION,
     )
 ]
@@ -320,10 +321,7 @@ MonitorOptionField = Annotated[
 
 RUN_IDS_LIST_OPTION_TYPE_HELP = 'List of MLFlow run IDs to run'
 RunIdsListOptionType = Annotated[
-    List[str],
-    Field(
-        description=RUN_IDS_LIST_OPTION_TYPE_HELP
-    ),
+    str,
     typer.Option(
         "--run-ids",
         help=RUN_IDS_LIST_OPTION_TYPE_HELP,

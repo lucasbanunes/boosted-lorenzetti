@@ -240,7 +240,7 @@ class DuckDBDataset(L.LightningDataModule):
 
         dataset = torch.utils.data.TensorDataset(X, y)
 
-        return torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        return torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=(datatype == 'train'))
 
     def __get_mlflow_dataset(self, query: str, name: str | None = None):
         X, y = self.get_df_from_query(query)
