@@ -39,7 +39,7 @@ class TrainingJob(MLFlowLoggedJob):
     ROC_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_roc_curve.html'
     TPR_FPR_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_tpr_fpr_curve.html'
 
-    db_path: Path
+    db_path: types.DbPathOptionField
     train_query: str
     dims: types.DimsFieldType
     val_query: str | None = None

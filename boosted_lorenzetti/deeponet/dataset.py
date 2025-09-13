@@ -5,8 +5,7 @@ import polars as pl
 import pandas as pd
 import lightning as L
 import torch
-# import pandas as pd
-# import mlflow
+import mlflow
 
 from ..dataset.duckdb import get_balanced_class_weights
 from ..constants import N_RINGS
@@ -91,6 +90,10 @@ class DuckDBDeepONetRingerDataset(L.LightningDataModule):
         self.train_df = self.preprocess_df(self.train_df)
         self.val_df = self.preprocess_df(self.val_df)
 
+    @property
+    def predict_df(self) -> pl.DataFrame:
+        return pl.concat([self.train_df, self.val_df], how='vertical')
+
     @cached_property
     def balanced_class_weights(self) -> list[float]:
         """
@@ -144,4 +147,33 @@ class DuckDBDeepONetRingerDataset(L.LightningDataModule):
         return self.get_dataloader(self.val_df)
 
     def predict_dataloader(self):
-        return self.get_dataloader(pl.concat([self.train_df, self.val_df], how='vertical'))
+        return self.get_dataloader(self.predict_df)
+
+    def __get_mlflow_dataset(self, df: pl.DataFrame, name: str | None = None):
+        df = df.to_pandas(use_pyarrow_extension_array=True)
+        for dtype in df.dtypes.values:
+            if str(dtype) == 'object':
+                df = df.convert_dtypes(dtype_backend='pyarrow')
+                break
+        if name is None:
+            name = self.db_path.stem
+        dataset = mlflow.data.from_pandas(
+            df,
+            source=str(self.db_path),
+            name=name,
+            targets=self.label_col,
+        )
+        return dataset
+
+    def log_to_mlflow(self,
+                      train_name: str | None = None,
+                      val_name: str | None = None,
+                      test_name: str | None = None,
+                      predict_name: str | None = None):
+        train_dataset = self.__get_mlflow_dataset(self.train_df, train_name)
+        mlflow.log_input(train_dataset, context='training')
+        val_dataset = self.__get_mlflow_dataset(self.val_df, val_name)
+        mlflow.log_input(val_dataset, context='validation')
+        predict_dataset = self.__get_mlflow_dataset(
+            self.predict_df, predict_name)
+        mlflow.log_input(predict_dataset, context='prediction')

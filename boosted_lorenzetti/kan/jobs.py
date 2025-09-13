@@ -1,275 +1,126 @@
 from functools import cached_property
-from typing import Literal, List, Dict, Any, Annotated, ClassVar
-from pathlib import Path
-import mlflow
-from pydantic import ConfigDict, Field
-from datetime import datetime, timezone
-import json
-import logging
+import torch
 import lightning as L
+from typing import Any, Dict, ClassVar, Literal
+import mlflow
+from pathlib import Path
 from lightning.pytorch.loggers import MLFlowLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+from mlflow.models import infer_signature
+import logging
 import shutil
 import pandas as pd
-import typer
-from typing_extensions import TypedDict
+from datetime import datetime, timezone
+import plotly.graph_objects as go
+import json
 from itertools import product
 import plotly.express as px
-import plotly.graph_objects as go
-import torch
-from mlflow.models import infer_signature
+import numpy as np
+from pydantic import ConfigDict
+from typing_extensions import TypedDict
 
 
-from .dataset import DuckDBDeepONetRingerDataset
-from .classification import MLPUnstackedDeepONetBinaryClassifier
-from .. import jobs
+from .dataset import KANDataset
+from .models import KANBinaryClassifier
 from .. import types
+from ..jobs import MLFlowLoggedJob
 from .. import mlflow as boosted_mlflow
+from ..constants import N_RINGS
 from ..utils import flatten_dict
 
 
-TABLE_NAME_OPTION_FIELD_HELP = "Name of the table in the DuckDB database."
-TableNameOptionField = Annotated[
-    str,
-    Field(
-        description=TABLE_NAME_OPTION_FIELD_HELP,
-        example="data"
-    ),
-    typer.Option(
-        help=TABLE_NAME_OPTION_FIELD_HELP,
-    )
-]
+class TrainingJob(MLFlowLoggedJob):
 
-RING_COL_OPTION_FIELD_HELP = "Name of the ring column in the database."
-RingColOptionField = Annotated[
-    str,
-    Field(
-        description=RING_COL_OPTION_FIELD_HELP,
-        example="ring"
-    ),
-    typer.Option(
-        help=RING_COL_OPTION_FIELD_HELP,
-    )
-]
-
-ET_COL_OPTION_FIELD_HELP = "Name of the ET column in the database."
-EtColOptionField = Annotated[
-    str,
-    Field(
-        description=ET_COL_OPTION_FIELD_HELP,
-        example="et"
-    ),
-    typer.Option(
-        help=ET_COL_OPTION_FIELD_HELP,
-    )
-]
-
-ETA_COL_OPTION_FIELD_HELP = "Name of the eta column in the database."
-EtaColOptionField = Annotated[
-    str,
-    Field(
-        description=ETA_COL_OPTION_FIELD_HELP,
-        example="eta"
-    ),
-    typer.Option(
-        help=ETA_COL_OPTION_FIELD_HELP,
-    )
-]
-
-PILEUP_COL_OPTION_FIELD_HELP = "Name of the pileup column in the database."
-PileupColOptionField = Annotated[
-    str,
-    Field(
-        description=PILEUP_COL_OPTION_FIELD_HELP,
-        example="pileup"
-    ),
-    typer.Option(
-        help=PILEUP_COL_OPTION_FIELD_HELP,
-    )
-]
-
-FOLD_OPTION_FIELD_HELP = "Fold number for cross-validation."
-FoldOptionField = Annotated[
-    int,
-    Field(
-        description=FOLD_OPTION_FIELD_HELP,
-        example=0
-    ),
-    typer.Option(
-        help=FOLD_OPTION_FIELD_HELP,
-    )
-]
-
-BRANCH_DIMS_OPTION_FIELD_HELP = "List of dimensions for the branch network layers."
-BranchDimsField = Annotated[
-    List[int],
-    Field(
-        description=BRANCH_DIMS_OPTION_FIELD_HELP,
-        example=[64, 32, 16]
-    )
-]
-
-BRANCH_ACTIVATIONS_OPTION_FIELD_HELP = "List of activation functions for the branch network layers."
-BranchActivationsField = Annotated[
-    List[str | None],
-    Field(
-        description=BRANCH_ACTIVATIONS_OPTION_FIELD_HELP,
-        example=["relu", "relu", None]
-    ),
-]
-
-TRUNK_DIMS_OPTION_FIELD_HELP = "List of dimensions for the trunk network layers."
-TrunkDimsField = Annotated[
-    List[int],
-    Field(
-        description=TRUNK_DIMS_OPTION_FIELD_HELP,
-        example=[64, 32, 16]
-    )
-]
-
-TRUNK_ACTIVATIONS_OPTION_FIELD_HELP = "List of activation functions for the trunk network layers."
-TrunkActivationsField = Annotated[
-    List[str | None],
-    Field(
-        description=TRUNK_ACTIVATIONS_OPTION_FIELD_HELP,
-        example=["relu", "relu", None]
-    )
-]
-
-FOLD_COL_OPTION_FIELD_HELP = "Name of the fold column in the database."
-FoldColOptionField = Annotated[
-    str,
-    Field(
-        description=FOLD_COL_OPTION_FIELD_HELP,
-        example="fold"
-    ),
-    typer.Option(
-        help=FOLD_COL_OPTION_FIELD_HELP,
-    )
-]
-
-LABEL_COL_OPTION_FIELD_HELP = "Name of the label column in the database."
-LabelColOptionField = Annotated[
-    str,
-    Field(
-        description=LABEL_COL_OPTION_FIELD_HELP,
-        example="label"
-    ),
-    typer.Option(
-        help=LABEL_COL_OPTION_FIELD_HELP,
-    )
-]
-
-
-class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     MODEL_CKPT_PATH: ClassVar[str] = 'model.ckpt'
     METRICS_DF_PATH_FORMAT: ClassVar[str] = '{dataset_type}_metrics.csv'
     ROC_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_roc_curve.html'
     TPR_FPR_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_tpr_fpr_curve.html'
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    name: jobs.NameType = 'MLP Unstacked DeepONet Training Job'
-
     db_path: types.DbPathOptionField
-    table_name: TableNameOptionField
-    ring_col: RingColOptionField
-    et_col: EtColOptionField
-    eta_col: EtaColOptionField
-    pileup_col: PileupColOptionField
-    fold: FoldOptionField
-    branch_dims: BranchDimsField
-    branch_activations: BranchActivationsField
-    trunk_dims: TrunkDimsField
-    trunk_activations: TrunkActivationsField
-    fold_col: FoldColOptionField = 'fold'
-    label_col: LabelColOptionField = 'label'
-    learning_rate: types.LearningRateOptionField = 1e-3
+    dims: types.DimsFieldType
+    train_query: str
+    grid: int = 5
+    k: int = 3
+    val_query: str | None = None
+    test_query: str | None = None
+    predict_query: str | None = None
+    label_col: str = 'label'
     batch_size: types.BatchSizeType = 32
-    accelerator: types.AcceleratorType = 'cpu'
+    name: str = 'KAN Binary Classifier Training Job'
+    # For now, the implementation uses only cpu
+    # accelerator: types.AcceleratorType = 'cpu'
     patience: types.PatienceType = 10
     checkpoints_dir: types.CheckpointsDirType = Path('checkpoints/')
     max_epochs: types.MaxEpochsType = 3
     monitor: types.MonitorOptionField = 'val_max_sp'
+    learning_rate: types.LearningRateOptionField = 1e-3
 
-    model: MLPUnstackedDeepONetBinaryClassifier | None = None
+    model: KANBinaryClassifier | None = None
     metrics: Dict[str, Any] = {}
     metrics_dfs: Dict[str, pd.DataFrame] = {}
 
     @cached_property
-    def datamodule(self) -> DuckDBDeepONetRingerDataset:
-        return DuckDBDeepONetRingerDataset(
+    def datamodule(self) -> KANDataset:
+        return KANDataset(
             db_path=self.db_path,
-            table_name=self.table_name,
-            ring_col=self.ring_col,
-            et_col=self.et_col,
-            eta_col=self.eta_col,
-            pileup_col=self.pileup_col,
-            fold_col=self.fold_col,
-            fold=self.fold,
-            label_col=self.label_col,
-            batch_size=self.batch_size
-        )
+            train_query=self.train_query,
+            val_query=self.val_query,
+            test_query=self.test_query,
+            predict_query=self.predict_query,
+            label_cols=self.label_col,
+            batch_size=self.batch_size)
 
     def _to_mlflow(self):
         mlflow.log_param('db_path', self.db_path)
-        mlflow.log_param('table_name', self.table_name)
-        mlflow.log_param('ring_col', self.ring_col)
-        mlflow.log_param('et_col', self.et_col)
-        mlflow.log_param('eta_col', self.eta_col)
-        mlflow.log_param('pileup_col', self.pileup_col)
-        mlflow.log_param('fold', self.fold)
-        mlflow.log_param('branch_dims', json.dumps(self.branch_dims))
-        mlflow.log_param('branch_activations',
-                         json.dumps(self.branch_activations))
-        mlflow.log_param('trunk_dims', json.dumps(self.trunk_dims))
-        mlflow.log_param('trunk_activations',
-                         json.dumps(self.trunk_activations))
-        mlflow.log_param('fold_col', self.fold_col)
+        mlflow.log_param('dims', json.dumps(self.dims))
+        mlflow.log_param('train_query', self.train_query)
+        mlflow.log_param('grid', self.grid)
+        mlflow.log_param('k', self.k)
+        mlflow.log_param('val_query', self.val_query)
+        mlflow.log_param('test_query', self.test_query)
+        mlflow.log_param('predict_query', self.predict_query)
         mlflow.log_param('label_col', self.label_col)
-        mlflow.log_param('learning_rate', self.learning_rate)
         mlflow.log_param('batch_size', self.batch_size)
-        mlflow.log_param('accelerator', self.accelerator)
+        mlflow.log_param('name', self.name)
         mlflow.log_param('patience', self.patience)
-        mlflow.log_param('checkpoints_dir', self.checkpoints_dir)
+        mlflow.log_param('checkpoints_dir', str(self.checkpoints_dir))
         mlflow.log_param('max_epochs', self.max_epochs)
         mlflow.log_param('monitor', self.monitor)
+        mlflow.log_param('learning_rate', self.learning_rate)
 
     @classmethod
-    def _from_mlflow_run(cls, run) -> 'MLPUnstackedDeepONetTrainingJob':
+    def _from_mlflow_run(cls, run) -> 'TrainingJob':
+        run_id = run.info.run_id
         kwargs = dict(
             db_path=run.data.params['db_path'],
-            table_name=run.data.params['table_name'],
-            ring_col=run.data.params['ring_col'],
-            et_col=run.data.params['et_col'],
-            eta_col=run.data.params['eta_col'],
-            pileup_col=run.data.params['pileup_col'],
-            fold=run.data.params['fold'],
-            branch_dims=json.loads(run.data.params['branch_dims']),
-            branch_activations=json.loads(
-                run.data.params['branch_activations']),
-            trunk_dims=json.loads(run.data.params['trunk_dims']),
-            trunk_activations=json.loads(run.data.params['trunk_activations']),
-            fold_col=run.data.params['fold_col'],
+            dims=json.loads(run.data.params['dims']),
+            train_query=run.data.params['train_query'],
+            grid=run.data.params['grid'],
+            k=run.data.params['k'],
+            val_query=run.data.params['val_query'] if run.data.params['val_query'] != 'None' else None,
+            test_query=run.data.params['test_query'] if run.data.params['test_query'] != 'None' else None,
+            predict_query=run.data.params['predict_query'] if run.data.params['predict_query'] != 'None' else None,
             label_col=run.data.params['label_col'],
-            learning_rate=run.data.params['learning_rate'],
             batch_size=run.data.params['batch_size'],
-            accelerator=run.data.params['accelerator'],
             patience=run.data.params['patience'],
-            checkpoints_dir=run.data.params['checkpoints_dir'],
+            checkpoints_dir=Path(run.data.params['checkpoints_dir']),
             max_epochs=run.data.params['max_epochs'],
             monitor=run.data.params['monitor'],
+            learning_rate=run.data.params['learning_rate'],
         )
+
+        if boosted_mlflow.artifact_exists(run_id, cls.MODEL_CKPT_PATH):
+            kwargs['model'] = KANBinaryClassifier.load_from_checkpoint(
+                boosted_mlflow.download_artifact(run_id, cls.MODEL_CKPT_PATH)
+            )
         return cls(**kwargs)
 
     def log_model(self, tmp_dir: Path, checkpoint: ModelCheckpoint | None = None):
-        sample_X = self.datamodule.model_signature_df
-        scaler_path = tmp_dir / 'scaler_params.json'
-        with open(scaler_path, 'w') as f:
-            json.dump(self.datamodule.scaler_params, f, indent=4)
-        mlflow.log_artifact(scaler_path)
+        sample_X, _ = self.datamodule.get_df_from_query(
+            self.train_query, limit=10)
         with torch.no_grad():
             self.model.eval()
             output = self.model(sample_X.to_torch())
@@ -292,11 +143,12 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
         self.model.to_onnx(onnx_path, export_params=True)
         mlflow.log_artifact(str(onnx_path))
 
-    def log_class_weights(self, tmp_dir: Path):
-        class_weights = self.datamodule.balanced_class_weights
+    def log_class_weights(self, tmp_dir: Path) -> np.ndarray:
+        class_weights = self.datamodule.get_class_weights(how='balanced')
         class_weights_path = tmp_dir / 'class_weights.json'
         with open(class_weights_path, 'w') as f:
-            json.dump(class_weights, f, indent=4)
+            json.dump(class_weights.tolist(), f, indent=4)
+        mlflow.log_artifact(str(class_weights_path))
         return class_weights
 
     def log_metrics(self, prefix: str = ''):
@@ -306,8 +158,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
 
     def log_metrics_dfs(self, tmp_dir: Path):
         for dataset_type in self.metrics_dfs.keys():
-            metrics_df_path = tmp_dir / \
-                self.METRICS_DF_PATH_FORMAT.format(dataset_type=dataset_type)
+            metrics_df_path = tmp_dir / self.METRICS_DF_PATH_FORMAT.format(dataset_type=dataset_type)
             self.metrics_dfs[dataset_type].to_csv(metrics_df_path, index=False)
             mlflow.log_artifact(str(metrics_df_path))
 
@@ -356,21 +207,22 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
     def exec(self,
              tmp_dir: Path,
              experiment_name: str,
-             tracking_uri: str | None,
+             tracking_uri: str | None = None,
              force: Literal['all', 'error'] | None = None):
 
         exec_start = datetime.now(timezone.utc).timestamp()
         mlflow.log_metric('exec_start', exec_start)
+
         self.datamodule.log_to_mlflow()
         class_weights = self.log_class_weights(tmp_dir)
-
-        self.model = MLPUnstackedDeepONetBinaryClassifier(
-            branch_dims=self.branch_dims,
-            branch_activations=self.branch_activations,
-            trunk_dims=self.trunk_dims,
-            trunk_activations=self.trunk_activations,
-            class_weights=class_weights
+        self.model = KANBinaryClassifier(
+            dims=self.dims,
+            class_weights=class_weights,
+            learning_rate=self.learning_rate,
+            grid=self.grid,
+            k=self.k
         )
+        self.model.train()
 
         logger = MLFlowLogger(
             experiment_name=experiment_name,
@@ -380,26 +232,26 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
         )
 
         checkpoint = ModelCheckpoint(
-            monitor="val_max_sp",  # Monitor a validation metric
+            monitor=self.monitor,  # Monitor a validation metric
             dirpath=self.checkpoints_dir,  # Directory to save checkpoints
             filename='best-model-{epoch:02d}-{val_max_sp:.2f}',
             save_top_k=3,
-            mode="max",  # Save based on minimum validation loss,
+            mode="max",  # Save based on maximum validation accuracy
             save_on_train_epoch_end=False
         )
+
         callbacks = [
             EarlyStopping(
                 monitor=self.monitor,
                 patience=self.patience,
                 mode="max",
-                check_on_train_epoch_end=False
+                min_delta=1e-3
             ),
             checkpoint,
         ]
-
         trainer = L.Trainer(
             max_epochs=self.max_epochs,
-            accelerator=self.accelerator,
+            accelerator='cpu',
             devices=1,
             logger=logger,
             callbacks=callbacks,
@@ -413,18 +265,22 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
         mlflow.log_metric('fit_end', fit_end.timestamp())
         mlflow.log_metric(
             "fit_duration", (fit_end - fit_start).total_seconds())
-        self.model = MLPUnstackedDeepONetBinaryClassifier.load_from_checkpoint(
-            checkpoint.best_model_path
-        )
+        self.model = KANBinaryClassifier.load_from_checkpoint(
+            checkpoint.best_model_path)
         self.log_model(tmp_dir, checkpoint)
         logging.info('Training completed and model logged to MLFlow.')
         shutil.rmtree(str(self.checkpoints_dir))
 
+        logging.info('Evaluating best model on datasets.')
         dataloaders = {
             'train': self.datamodule.train_dataloader(),
-            'val': self.datamodule.val_dataloader(),
-            'predict': self.datamodule.predict_dataloader()
         }
+        if self.val_query:
+            dataloaders['val'] = self.datamodule.val_dataloader()
+        if self.test_query:
+            dataloaders['test'] = self.datamodule.test_dataloader()
+        if self.predict_query:
+            dataloaders['predict'] = self.datamodule.predict_dataloader()
 
         for dataset_type, dataloader in dataloaders.items():
             logging.info(f'Evaluating best model on {dataset_type} dataset')
@@ -433,6 +289,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
                 dataloaders=dataloader
             )
             metrics, metrics_df = self.model.compute_test_metrics()
+
             self.metrics[dataset_type] = metrics
             self.metrics_dfs[dataset_type] = metrics_df
             self.model.test_metrics.reset()
@@ -446,83 +303,95 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
         mlflow.log_metric("exec_duration", end_start - exec_start)
 
 
-class KFoldMLPUnstackedDeepONetJobChild(TypedDict):
+class KFoldTrainingJobChild(TypedDict):
     init: int
     fold: int
-    job: MLPUnstackedDeepONetTrainingJob
+    job: TrainingJob
 
 
-class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
+class KFoldTrainingJob(MLFlowLoggedJob):
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    TRAIN_QUERY_TEMPLATE: ClassVar[str] = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} != {fold} AND {fold_col} >= 0;"
+    VAL_QUERY_TEMPLATE: ClassVar[str] = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} = {fold} AND {fold_col} >= 0;"
+    PREDICT_QUERY_TEMPLATE: ClassVar[str] = "SELECT {feature_cols_str}, {label_col} FROM {table_name} WHERE {fold_col} >= 0;"
     METRICS_PATH: ClassVar[str] = 'kfold_metrics.csv'
     METRICS_DESCRIPTION_PATH: ClassVar[str] = 'kfold_metrics_description.csv'
     BEST_METRIC_BOX_PLOT_PATH: ClassVar[str] = '{best_metric}_box_plot.html'
-    POSSIBLE_DATASET_TYPES: ClassVar[list[str]] = [
-        'train', 'val', 'test', 'predict']
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    name: jobs.NameType = 'K-Fold MLP Unstacked DeepONet Job'
+    POSSIBLE_DATATYPES: ClassVar[list[str]] = ['train', 'val', 'test', 'predict']
 
     db_path: types.DbPathOptionField
-    table_name: TableNameOptionField
-    ring_col: RingColOptionField
-    et_col: EtColOptionField
-    eta_col: EtaColOptionField
-    pileup_col: PileupColOptionField
-    branch_dims: BranchDimsField
-    branch_activations: BranchActivationsField
-    trunk_dims: TrunkDimsField
-    trunk_activations: TrunkActivationsField
+    ring_col: types.RingColOptionField
+    dims: types.DimsFieldType
     best_metric: types.BestMetricType
     best_metric_mode: types.BestMetricModeType
+    grid: int = 5
+    k: int = 3
+    fold_col: str = 'fold'
+    label_col: str = 'label'
+    table_name: types.TableNameOptionField = 'data'
+    inits: types.InitsType = 5
     folds: types.FoldsType = 5
-    inits: types.InitsType = 1
-    fold_col: FoldColOptionField = 'fold'
-    label_col: LabelColOptionField = 'label'
-    learning_rate: types.LearningRateOptionField = 1e-3
     batch_size: types.BatchSizeType = 32
-    accelerator: types.AcceleratorType = 'cpu'
+    name: str = 'KAN Binary Classifier KFold Training Job'
     patience: types.PatienceType = 10
     checkpoints_dir: types.CheckpointsDirType = Path('checkpoints/')
     max_epochs: types.MaxEpochsType = 3
     monitor: types.MonitorOptionField = 'val_max_sp'
+    learning_rate: types.LearningRateOptionField = 1e-3
 
-    children: list[KFoldMLPUnstackedDeepONetJobChild] = []
+    children: list[KFoldTrainingJobChild] = []
     metrics: pd.DataFrame | None = None
-    best_job: MLPUnstackedDeepONetTrainingJob | None = None
+    best_job: TrainingJob | None = None
     best_job_metrics: dict[str, Any] = {}
     metrics_description: pd.DataFrame | None = None
 
     def model_post_init(self, context):
 
+        # if self.n_jobs < 1:
+        #     raise ValueError(f'n_jobs must be at least 1, received {self.n_jobs}')
+
         if not self.children:
+            feature_cols_str = ', '.join([f'{self.ring_col}[{i+1}]' for i in range(N_RINGS)])
             for init, fold in product(range(self.inits), range(self.folds)):
-                job_checkpoint_dir = self.checkpoints_dir / \
-                    f'fold_{fold}_init_{init}'
+                job_checkpoint_dir = self.checkpoints_dir / f'fold_{fold}_init_{init}'
                 job_dict = {
                     'init': init,
                     'fold': fold,
-                    'job': MLPUnstackedDeepONetTrainingJob(
+                    'job': TrainingJob(
                         db_path=self.db_path,
-                        table_name=self.table_name,
-                        ring_col=self.ring_col,
-                        et_col=self.et_col,
-                        eta_col=self.eta_col,
-                        pileup_col=self.pileup_col,
-                        fold=fold,
-                        branch_dims=self.branch_dims,
-                        branch_activations=self.branch_activations,
-                        trunk_dims=self.trunk_dims,
-                        trunk_activations=self.trunk_activations,
-                        fold_col=self.fold_col,
+                        dims=self.dims,
+                        train_query=self.TRAIN_QUERY_TEMPLATE.format(
+                            feature_cols_str=feature_cols_str,
+                            label_col=self.label_col,
+                            table_name=self.table_name,
+                            fold_col=self.fold_col,
+                            fold=fold
+                        ),
+                        grid=self.grid,
+                        k=self.k,
+                        val_query=self.VAL_QUERY_TEMPLATE.format(
+                            feature_cols_str=feature_cols_str,
+                            label_col=self.label_col,
+                            table_name=self.table_name,
+                            fold_col=self.fold_col,
+                            fold=fold
+                        ),
+                        predict_query=self.PREDICT_QUERY_TEMPLATE.format(
+                            feature_cols_str=feature_cols_str,
+                            label_col=self.label_col,
+                            table_name=self.table_name,
+                            fold_col=self.fold_col,
+                        ),
                         label_col=self.label_col,
-                        learning_rate=self.learning_rate,
                         batch_size=self.batch_size,
-                        accelerator=self.accelerator,
+                        name=f'{self.name} - fold {fold} - init {init}',
                         patience=self.patience,
                         checkpoints_dir=job_checkpoint_dir,
                         max_epochs=self.max_epochs,
-                        monitor=self.monitor
+                        monitor=self.monitor,
+                        learning_rate=self.learning_rate
                     )
                 }
                 self.children.append(job_dict)
@@ -530,65 +399,54 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
 
     def _to_mlflow(self):
         mlflow.log_param('db_path', self.db_path)
-        mlflow.log_param('table_name', self.table_name)
         mlflow.log_param('ring_col', self.ring_col)
-        mlflow.log_param('et_col', self.et_col)
-        mlflow.log_param('eta_col', self.eta_col)
-        mlflow.log_param('pileup_col', self.pileup_col)
-        mlflow.log_param('branch_dims', json.dumps(self.branch_dims))
-        mlflow.log_param('branch_activations',
-                         json.dumps(self.branch_activations))
-        mlflow.log_param('trunk_dims', json.dumps(self.trunk_dims))
-        mlflow.log_param('trunk_activations',
-                         json.dumps(self.trunk_activations))
+        mlflow.log_param('dims', json.dumps(self.dims))
+        mlflow.log_param('grid', self.grid)
+        mlflow.log_param('k', self.k)
         mlflow.log_param('best_metric', self.best_metric)
         mlflow.log_param('best_metric_mode', self.best_metric_mode)
-        mlflow.log_param('folds', self.folds)
-        mlflow.log_param('inits', self.inits)
         mlflow.log_param('fold_col', self.fold_col)
         mlflow.log_param('label_col', self.label_col)
-        mlflow.log_param('learning_rate', self.learning_rate)
+        mlflow.log_param('table_name', self.table_name)
+        mlflow.log_param('inits', self.inits)
+        mlflow.log_param('folds', self.folds)
         mlflow.log_param('batch_size', self.batch_size)
-        mlflow.log_param('accelerator', self.accelerator)
         mlflow.log_param('patience', self.patience)
         mlflow.log_param('checkpoints_dir', str(self.checkpoints_dir))
         mlflow.log_param('max_epochs', self.max_epochs)
         mlflow.log_param('monitor', self.monitor)
+        mlflow.log_param('learning_rate', self.learning_rate)
         for child in self.children:
             tags = {
                 'fold': str(child['fold']),
                 'init': str(child['init']),
             }
             child['job'].to_mlflow(nested=True, tags=tags)
+        # mlflow.log_param('n_jobs', self.n_jobs)
 
     @classmethod
-    def _from_mlflow_run(cls, run) -> 'KFoldMLPUnstackedDeepONetJob':
+    def _from_mlflow_run(cls, run) -> 'KFoldTrainingJob':
         run_id = run.info.run_id
         kwargs = dict(
             db_path=run.data.params['db_path'],
-            table_name=run.data.params['table_name'],
             ring_col=run.data.params['ring_col'],
-            et_col=run.data.params['et_col'],
-            eta_col=run.data.params['eta_col'],
-            pileup_col=run.data.params['pileup_col'],
-            branch_dims=json.loads(run.data.params['branch_dims']),
-            branch_activations=json.loads(
-                run.data.params['branch_activations']),
-            trunk_dims=json.loads(run.data.params['trunk_dims']),
-            trunk_activations=json.loads(run.data.params['trunk_activations']),
+            dims=json.loads(run.data.params['dims']),
             best_metric=run.data.params['best_metric'],
             best_metric_mode=run.data.params['best_metric_mode'],
-            folds=run.data.params['folds'],
-            inits=run.data.params['inits'],
+            grid=run.data.params['grid'],
+            k=run.data.params['k'],
             fold_col=run.data.params['fold_col'],
             label_col=run.data.params['label_col'],
-            learning_rate=run.data.params['learning_rate'],
+            table_name=run.data.params['table_name'],
+            inits=run.data.params['inits'],
+            folds=run.data.params['folds'],
             batch_size=run.data.params['batch_size'],
-            accelerator=run.data.params['accelerator'],
             patience=run.data.params['patience'],
-            checkpoints_dir=Path(run.data.params['checkpoints_dir']),
+            checkpoints_dir=run.data.params['checkpoints_dir'],
             max_epochs=run.data.params['max_epochs'],
-            monitor=run.data.params['monitor']
+            monitor=run.data.params['monitor'],
+            learning_rate=run.data.params['learning_rate'],
+            # n_jobs=run.data.params['n_jobs']
         )
         if boosted_mlflow.artifact_exists(run_id, cls.METRICS_PATH):
             kwargs['metrics'] = boosted_mlflow.load_mlflow_csv(run_id,
@@ -610,7 +468,7 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
                 {
                     'fold': int(child_run.data.tags['fold']),
                     'init': int(child_run.data.tags['init']),
-                    'job': MLPUnstackedDeepONetTrainingJob.from_mlflow_run(child_run)
+                    'job': TrainingJob.from_mlflow_run(child_run)
                 }
             )
         return cls(**kwargs)
@@ -634,8 +492,7 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
         metrics_path = tmp_dir / self.METRICS_PATH
         self.metrics.to_csv(metrics_path, index=False)
         mlflow.log_artifact(str(metrics_path))
-        box_plot_artifact = self.BEST_METRIC_BOX_PLOT_PATH.format(
-            best_metric=self.best_metric)
+        box_plot_artifact = self.BEST_METRIC_BOX_PLOT_PATH.format(best_metric=self.best_metric)
         fig = self.make_box_plot()
         mlflow.log_figure(fig, box_plot_artifact)
 
@@ -664,13 +521,14 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
             raise RuntimeError('No child training jobs found.')
 
         metrics = []
+        # if self.n_jobs == 1:
         for child in self.children:
 
             child['job'].execute(
                 experiment_name=experiment_name,
                 tracking_uri=tracking_uri,
                 nested=True,
-                force=force
+                force=False
             )
             children_metrics = flatten_dict(child['job'].metrics)
             children_metrics['id'] = child['job'].id_
@@ -718,8 +576,8 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
                   var_name='metric')
         self.log_metrics(tmp_dir)
         self.log_metrics_description(tmp_dir)
-        self.best_job.log_model(tmp_dir)
         self.best_job.log_class_weights(tmp_dir)
+        self.best_job.log_model(tmp_dir)
         self.best_job.log_metrics_dfs(tmp_dir)
         self.best_job.log_roc_figs()
         self.best_job.log_tpr_fpr_figs()
