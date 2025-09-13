@@ -326,3 +326,45 @@ RunIdsListOptionType = Annotated[
         help=RUN_IDS_LIST_OPTION_TYPE_HELP,
     )
 ]
+
+DB_PATH_OPTION_FIELD_HELP = "Path to the DuckDB database file."
+DbPathOptionField = Annotated[
+    Path,
+    Field(
+        description=DB_PATH_OPTION_FIELD_HELP,
+        example="data/database.duckdb"
+    ),
+    typer.Option(
+        help=DB_PATH_OPTION_FIELD_HELP,
+    )
+]
+
+
+LEARNING_RATE_OPTION_FIELD_HELP = "Learning rate for the optimizer."
+LearningRateOptionField = Annotated[
+    float,
+    Field(
+        description=LEARNING_RATE_OPTION_FIELD_HELP,
+        example=1e-3
+    ),
+    typer.Option(
+        help=LEARNING_RATE_OPTION_FIELD_HELP,
+    )
+]
+
+
+RING_COL_OPTION_FIELD_HELP = "Name of the column containing the ring data."
+RingColOptionField = Annotated[
+    str,
+    Field(description=RING_COL_OPTION_FIELD_HELP,
+          example="cl_rings"),
+    typer.Option(help=RING_COL_OPTION_FIELD_HELP)
+]
+
+TABLE_NAME_OPTION_FIELD_HELP = "Name of the DuckDB table containing the dataset."
+TableNameOptionField = Annotated[
+    str,
+    Field(description=TABLE_NAME_OPTION_FIELD_HELP,
+          example="data"),
+    typer.Option(help=TABLE_NAME_OPTION_FIELD_HELP)
+]

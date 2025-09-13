@@ -21,8 +21,8 @@ from pydantic import ConfigDict
 from typing_extensions import TypedDict
 
 
-from .dataset import MLPDataset
-from .models import MLP
+from .dataset import KANDataset
+from .models import KANBinaryClassifier
 from .. import types
 from ..jobs import MLFlowLoggedJob
 from .. import mlflow as boosted_mlflow
@@ -40,28 +40,31 @@ class TrainingJob(MLFlowLoggedJob):
     TPR_FPR_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_tpr_fpr_curve.html'
 
     db_path: types.DbPathOptionField
-    train_query: str
     dims: types.DimsFieldType
+    train_query: str
+    grid: int = 5
+    k: int = 3
     val_query: str | None = None
     test_query: str | None = None
     predict_query: str | None = None
     label_col: str = 'label'
-    activation: types.ActivationType = 'relu'
     batch_size: types.BatchSizeType = 32
-    name: str = 'MLP Training Job'
-    accelerator: types.AcceleratorType = 'cpu'
+    name: str = 'KAN Binary Classifier Training Job'
+    # For now, the implementation uses only cpu
+    # accelerator: types.AcceleratorType = 'cpu'
     patience: types.PatienceType = 10
     checkpoints_dir: types.CheckpointsDirType = Path('checkpoints/')
     max_epochs: types.MaxEpochsType = 3
     monitor: types.MonitorOptionField = 'val_max_sp'
+    learning_rate: types.LearningRateOptionField = 1e-3
 
-    model: MLP | None = None
+    model: KANBinaryClassifier | None = None
     metrics: Dict[str, Any] = {}
     metrics_dfs: Dict[str, pd.DataFrame] = {}
 
     @cached_property
-    def datamodule(self) -> MLPDataset:
-        return MLPDataset(
+    def datamodule(self) -> KANDataset:
+        return KANDataset(
             db_path=self.db_path,
             train_query=self.train_query,
             val_query=self.val_query,
@@ -72,44 +75,45 @@ class TrainingJob(MLFlowLoggedJob):
 
     def _to_mlflow(self):
         mlflow.log_param('db_path', self.db_path)
-        mlflow.log_param('train_query', self.train_query)
         mlflow.log_param('dims', json.dumps(self.dims))
+        mlflow.log_param('train_query', self.train_query)
+        mlflow.log_param('grid', self.grid)
+        mlflow.log_param('k', self.k)
         mlflow.log_param('val_query', self.val_query)
         mlflow.log_param('test_query', self.test_query)
         mlflow.log_param('predict_query', self.predict_query)
         mlflow.log_param('label_col', self.label_col)
-        mlflow.log_param('activation', self.activation)
         mlflow.log_param('batch_size', self.batch_size)
         mlflow.log_param('name', self.name)
-        mlflow.log_param('accelerator', self.accelerator)
         mlflow.log_param('patience', self.patience)
         mlflow.log_param('checkpoints_dir', str(self.checkpoints_dir))
         mlflow.log_param('max_epochs', self.max_epochs)
         mlflow.log_param('monitor', self.monitor)
+        mlflow.log_param('learning_rate', self.learning_rate)
 
     @classmethod
     def _from_mlflow_run(cls, run) -> 'TrainingJob':
         run_id = run.info.run_id
         kwargs = dict(
             db_path=run.data.params['db_path'],
-            train_query=run.data.params['train_query'],
             dims=json.loads(run.data.params['dims']),
+            train_query=run.data.params['train_query'],
+            grid=run.data.params['grid'],
+            k=run.data.params['k'],
             val_query=run.data.params['val_query'] if run.data.params['val_query'] != 'None' else None,
             test_query=run.data.params['test_query'] if run.data.params['test_query'] != 'None' else None,
             predict_query=run.data.params['predict_query'] if run.data.params['predict_query'] != 'None' else None,
             label_col=run.data.params['label_col'],
-            activation=run.data.params['activation'],
             batch_size=run.data.params['batch_size'],
-            name=run.data.params['name'],
-            accelerator=run.data.params['accelerator'],
             patience=run.data.params['patience'],
-            checkpoints_dir=run.data.params['checkpoints_dir'],
+            checkpoints_dir=Path(run.data.params['checkpoints_dir']),
             max_epochs=run.data.params['max_epochs'],
-            monitor=run.data.params['monitor']
+            monitor=run.data.params['monitor'],
+            learning_rate=run.data.params['learning_rate'],
         )
 
         if boosted_mlflow.artifact_exists(run_id, cls.MODEL_CKPT_PATH):
-            kwargs['model'] = MLP.load_from_checkpoint(
+            kwargs['model'] = KANBinaryClassifier.load_from_checkpoint(
                 boosted_mlflow.download_artifact(run_id, cls.MODEL_CKPT_PATH)
             )
         return cls(**kwargs)
@@ -211,9 +215,13 @@ class TrainingJob(MLFlowLoggedJob):
 
         self.datamodule.log_to_mlflow()
         class_weights = self.log_class_weights(tmp_dir)
-        self.model = MLP(dims=self.dims,
-                         class_weights=class_weights,
-                         activation=self.activation)
+        self.model = KANBinaryClassifier(
+            dims=self.dims,
+            class_weights=class_weights,
+            learning_rate=self.learning_rate,
+            grid=self.grid,
+            k=self.k
+        )
         self.model.train()
 
         logger = MLFlowLogger(
@@ -243,7 +251,7 @@ class TrainingJob(MLFlowLoggedJob):
         ]
         trainer = L.Trainer(
             max_epochs=self.max_epochs,
-            accelerator=self.accelerator,
+            accelerator='cpu',
             devices=1,
             logger=logger,
             callbacks=callbacks,
@@ -257,7 +265,7 @@ class TrainingJob(MLFlowLoggedJob):
         mlflow.log_metric('fit_end', fit_end.timestamp())
         mlflow.log_metric(
             "fit_duration", (fit_end - fit_start).total_seconds())
-        self.model = MLP.load_from_checkpoint(
+        self.model = KANBinaryClassifier.load_from_checkpoint(
             checkpoint.best_model_path)
         self.log_model(tmp_dir, checkpoint)
         logging.info('Training completed and model logged to MLFlow.')
@@ -313,24 +321,25 @@ class KFoldTrainingJob(MLFlowLoggedJob):
     BEST_METRIC_BOX_PLOT_PATH: ClassVar[str] = '{best_metric}_box_plot.html'
     POSSIBLE_DATATYPES: ClassVar[list[str]] = ['train', 'val', 'test', 'predict']
 
-    db_path: Path
-    ring_col: str
+    db_path: types.DbPathOptionField
+    ring_col: types.RingColOptionField
     dims: types.DimsFieldType
     best_metric: types.BestMetricType
     best_metric_mode: types.BestMetricModeType
+    grid: int = 5
+    k: int = 3
     fold_col: str = 'fold'
     label_col: str = 'label'
-    table_name: str = 'data'
+    table_name: types.TableNameOptionField = 'data'
     inits: types.InitsType = 5
     folds: types.FoldsType = 5
-    activation: types.ActivationType = 'relu'
     batch_size: types.BatchSizeType = 32
-    name: str = 'MLP KFold Training Job'
-    accelerator: types.AcceleratorType = 'cpu'
+    name: str = 'KAN Binary Classifier KFold Training Job'
     patience: types.PatienceType = 10
     checkpoints_dir: types.CheckpointsDirType = Path('checkpoints/')
     max_epochs: types.MaxEpochsType = 3
     monitor: types.MonitorOptionField = 'val_max_sp'
+    learning_rate: types.LearningRateOptionField = 1e-3
 
     children: list[KFoldTrainingJobChild] = []
     metrics: pd.DataFrame | None = None
@@ -352,6 +361,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                     'fold': fold,
                     'job': TrainingJob(
                         db_path=self.db_path,
+                        dims=self.dims,
                         train_query=self.TRAIN_QUERY_TEMPLATE.format(
                             feature_cols_str=feature_cols_str,
                             label_col=self.label_col,
@@ -359,6 +369,8 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                             fold_col=self.fold_col,
                             fold=fold
                         ),
+                        grid=self.grid,
+                        k=self.k,
                         val_query=self.VAL_QUERY_TEMPLATE.format(
                             feature_cols_str=feature_cols_str,
                             label_col=self.label_col,
@@ -372,16 +384,14 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                             table_name=self.table_name,
                             fold_col=self.fold_col,
                         ),
-                        dims=self.dims,
                         label_col=self.label_col,
-                        activation=self.activation,
                         batch_size=self.batch_size,
                         name=f'{self.name} - fold {fold} - init {init}',
-                        accelerator=self.accelerator,
                         patience=self.patience,
                         checkpoints_dir=job_checkpoint_dir,
                         max_epochs=self.max_epochs,
-                        monitor=self.monitor
+                        monitor=self.monitor,
+                        learning_rate=self.learning_rate
                     )
                 }
                 self.children.append(job_dict)
@@ -391,6 +401,8 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('ring_col', self.ring_col)
         mlflow.log_param('dims', json.dumps(self.dims))
+        mlflow.log_param('grid', self.grid)
+        mlflow.log_param('k', self.k)
         mlflow.log_param('best_metric', self.best_metric)
         mlflow.log_param('best_metric_mode', self.best_metric_mode)
         mlflow.log_param('fold_col', self.fold_col)
@@ -398,14 +410,12 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         mlflow.log_param('table_name', self.table_name)
         mlflow.log_param('inits', self.inits)
         mlflow.log_param('folds', self.folds)
-        mlflow.log_param('activation', self.activation)
         mlflow.log_param('batch_size', self.batch_size)
-        mlflow.log_param('name', self.name)
-        mlflow.log_param('accelerator', self.accelerator)
         mlflow.log_param('patience', self.patience)
         mlflow.log_param('checkpoints_dir', str(self.checkpoints_dir))
         mlflow.log_param('max_epochs', self.max_epochs)
         mlflow.log_param('monitor', self.monitor)
+        mlflow.log_param('learning_rate', self.learning_rate)
         for child in self.children:
             tags = {
                 'fold': str(child['fold']),
@@ -415,7 +425,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         # mlflow.log_param('n_jobs', self.n_jobs)
 
     @classmethod
-    def _from_mlflow_run(cls, run) -> 'TrainingJob':
+    def _from_mlflow_run(cls, run) -> 'KFoldTrainingJob':
         run_id = run.info.run_id
         kwargs = dict(
             db_path=run.data.params['db_path'],
@@ -423,19 +433,19 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             dims=json.loads(run.data.params['dims']),
             best_metric=run.data.params['best_metric'],
             best_metric_mode=run.data.params['best_metric_mode'],
+            grid=run.data.params['grid'],
+            k=run.data.params['k'],
             fold_col=run.data.params['fold_col'],
             label_col=run.data.params['label_col'],
             table_name=run.data.params['table_name'],
             inits=run.data.params['inits'],
             folds=run.data.params['folds'],
-            activation=run.data.params['activation'],
             batch_size=run.data.params['batch_size'],
-            name=run.data.params['name'],
-            accelerator=run.data.params['accelerator'],
             patience=run.data.params['patience'],
             checkpoints_dir=run.data.params['checkpoints_dir'],
             max_epochs=run.data.params['max_epochs'],
             monitor=run.data.params['monitor'],
+            learning_rate=run.data.params['learning_rate'],
             # n_jobs=run.data.params['n_jobs']
         )
         if boosted_mlflow.artifact_exists(run_id, cls.METRICS_PATH):
@@ -525,23 +535,6 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             children_metrics['fold'] = child['fold']
             children_metrics['init'] = child['init']
             metrics.append(children_metrics)
-        # else:
-        #     def run_child(child: KFoldTrainingJobChild) -> Dict[str, Any]:
-        #         child['job'].execute(
-        #             experiment_name=experiment_name,
-        #             tracking_uri=tracking_uri,
-        #             nested=True,
-        #             force=False
-        #         )
-        #         children_metrics = flatten_dict(child['job'].metrics)
-        #         children_metrics['id'] = child['job'].id_
-        #         children_metrics['fold'] = child['fold']
-        #         children_metrics['init'] = child['init']
-        #         return children_metrics
-
-        #     metrics = joblib.Parallel(n_jobs=self.n_jobs)(
-        #         joblib.delayed(run_child)(child) for child in self.children
-        #     )
 
         self.metrics = pd.DataFrame.from_records(metrics)
 
@@ -584,7 +577,6 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         self.log_metrics(tmp_dir)
         self.log_metrics_description(tmp_dir)
         self.best_job.log_class_weights(tmp_dir)
-        # self.best_job.log_metrics(prefix='best_job.')
         self.best_job.log_model(tmp_dir)
         self.best_job.log_metrics_dfs(tmp_dir)
         self.best_job.log_roc_figs()
