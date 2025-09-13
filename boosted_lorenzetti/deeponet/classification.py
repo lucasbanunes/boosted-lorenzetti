@@ -13,6 +13,7 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
     def __init__(self,
                  branch_net: nn.Module,
                  trunk_net: nn.Module,
+                 branch_input_dim: int,
                  class_weights: list[float] | None = None,
                  learning_rate: float = 1e-3,
                  ):
@@ -20,11 +21,12 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
         super().__init__()
         self.branch_net = branch_net
         self.trunk_net = trunk_net
+        self.branch_input_dim = branch_input_dim
         self.loss_func = nn.BCEWithLogitsLoss(reduction='none')
-        self.example_input_array = [
-            self.branch_net.example_input_array,
-            self.trunk_net.example_input_array
-        ]
+        self.example_input_array = torch.concat([
+            self.branch_net.example_input_array.reshape(1, -1),
+            self.trunk_net.example_input_array.reshape(1, -1)
+        ], dim=1)
         self.learning_rate = learning_rate
 
         if class_weights is None:
@@ -45,11 +47,11 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
             'loss': BCELossMetric()
         })
 
-    def forward(self, branch_input: torch.Tensor, trunk_input: torch.Tensor) -> torch.Tensor:
-        return torch.linalg.vecdot(
-            self.branch_net(branch_input),
-            self.trunk_net(trunk_input)
-        )
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Exporting to onnx doesn't support torch.linalg.vecdot
+        product = (self.branch_net(x[..., :self.branch_input_dim]) *
+                   self.trunk_net(x[..., self.branch_input_dim:]))
+        return torch.sum(product, dim=-1)
 
     def reset_metrics(self):
         self.train_metrics.reset()
@@ -65,10 +67,10 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
         return torch.mean(weights*self.loss_func(logits, y))
 
     def training_step(self,
-                      batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                      batch: Tuple[torch.Tensor, torch.Tensor],
                       batch_idx: torch.Tensor):
-        branch_input, trunk_input, y = batch
-        logits = self(branch_input, trunk_input)
+        x, y = batch
+        logits = self(x)
         loss = self.get_loss(logits, y.float())
         self.log("train_loss", loss, on_epoch=True, prog_bar=True)
         prob = torch.sigmoid(logits)
@@ -93,8 +95,8 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
     def validation_step(self,
                         batch: Tuple[torch.Tensor, torch.Tensor],
                         batch_idx: torch.Tensor):
-        branch_input, trunk_input, y = batch
-        logits = self(branch_input, trunk_input)
+        x, y = batch
+        logits = self(x)
         loss = self.get_loss(logits, y.float())
         prob = torch.sigmoid(logits)
         self.val_metrics.update(prob, y)
@@ -118,8 +120,8 @@ class UnstackedDeepONetBinaryClassifier(L.LightningModule):
     def test_step(self,
                   batch: Tuple[torch.Tensor, torch.Tensor],
                   batch_idx: torch.Tensor):
-        branch_input, trunk_input, y = batch
-        logits = self(branch_input, trunk_input)
+        x, y = batch
+        logits = self(x)
         loss = self.get_loss(logits, y.float())
         prob = torch.sigmoid(logits)
         self.test_metrics.update(prob, y)
@@ -174,5 +176,6 @@ class MLPUnstackedDeepONetBinaryClassifier(UnstackedDeepONetBinaryClassifier):
             trunk_net=build_mlp(
                 dims=trunk_dims, activations=trunk_activations),
             class_weights=class_weights,
-            learning_rate=learning_rate
+            learning_rate=learning_rate,
+            branch_input_dim=branch_dims[0]
         )

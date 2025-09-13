@@ -6,8 +6,8 @@ import subprocess
 from boosted_lorenzetti.constants import N_RINGS
 
 
-def test_full_training(test_dataset_path: Path):
-    experiment_name = 'test_full_training'
+def test_mlp_full_training(test_dataset_path: Path):
+    experiment_name = 'test_mlp_full_training'
 
     ring_cols = [f'cl_rings[{i+1}]' for i in range(N_RINGS)]
     query_cols = ring_cols + ['label']
@@ -30,8 +30,8 @@ def test_full_training(test_dataset_path: Path):
     )
 
 
-def test_multiple_trainings(test_dataset_path: Path, repo_path: Path):
-    experiment_name = 'test_multiple_trainings'
+def test_mlp_multiple_trainings(test_dataset_path: Path, repo_path: Path):
+    experiment_name = 'test_mlp_multiple_trainings'
 
     ring_cols = [f'cl_rings[{i+1}]' for i in range(N_RINGS)]
     query_cols = ring_cols + ['label']
@@ -71,8 +71,8 @@ def test_multiple_trainings(test_dataset_path: Path, repo_path: Path):
     ])
 
 
-def test_kfold_training(test_dataset_path: Path):
-    experiment_name = 'test_kfold_training'
+def test_mlp_kfold_training(test_dataset_path: Path):
+    experiment_name = 'test_mlp_kfold_training'
 
     run_id = create_kfold(
         db_path=test_dataset_path,
@@ -96,8 +96,8 @@ def test_kfold_training(test_dataset_path: Path):
     )
 
 
-def test_create_kfold_cli(test_dataset_path: Path, repo_path: Path):
-    experiment_name = 'test_create_kfold_cli'
+def test_mlp_create_kfold_cli(test_dataset_path: Path, repo_path: Path):
+    experiment_name = 'test_mlp_create_kfold_cli'
 
     result = subprocess.run(['python',
                              f'{str(repo_path)}/cli.py',

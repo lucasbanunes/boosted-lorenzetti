@@ -59,6 +59,17 @@ class TrainingJob(MLFlowLoggedJob):
     metrics: Dict[str, Any] = {}
     metrics_dfs: Dict[str, pd.DataFrame] = {}
 
+    @cached_property
+    def datamodule(self) -> MLPDataset:
+        return MLPDataset(
+            db_path=self.db_path,
+            train_query=self.train_query,
+            val_query=self.val_query,
+            test_query=self.test_query,
+            predict_query=self.predict_query,
+            label_cols=self.label_col,
+            batch_size=self.batch_size)
+
     def _to_mlflow(self):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('train_query', self.train_query)
@@ -103,110 +114,7 @@ class TrainingJob(MLFlowLoggedJob):
             )
         return cls(**kwargs)
 
-    @cached_property
-    def datamodule(self) -> MLPDataset:
-        return MLPDataset(
-            db_path=self.db_path,
-            train_query=self.train_query,
-            val_query=self.val_query,
-            test_query=self.test_query,
-            predict_query=self.predict_query,
-            label_cols=self.label_col,
-            batch_size=self.batch_size)
-
-    def exec(self,
-             tmp_dir: Path,
-             experiment_name: str,
-             tracking_uri: str | None = None,
-             force: Literal['all', 'error'] | None = None):
-
-        exec_start = datetime.now(timezone.utc).timestamp()
-        mlflow.log_metric('exec_start', exec_start)
-
-        self.datamodule.log_to_mlflow()
-        class_weights = self.log_class_weights(tmp_dir)
-        self.model = MLP(dims=self.dims,
-                         class_weights=class_weights,
-                         activation=self.activation)
-        self.model.train()
-
-        logger = MLFlowLogger(
-            experiment_name=experiment_name,
-            run_name=self.name,
-            tracking_uri=tracking_uri,
-            run_id=self.id_
-        )
-
-        checkpoint = ModelCheckpoint(
-            monitor=self.monitor,  # Monitor a validation metric
-            dirpath=self.checkpoints_dir,  # Directory to save checkpoints
-            filename='best-model-{epoch:02d}-{val_max_sp:.2f}',
-            save_top_k=3,
-            mode="max",  # Save based on maximum validation accuracy
-            save_on_train_epoch_end=False
-        )
-
-        callbacks = [
-            EarlyStopping(
-                monitor=self.monitor,
-                patience=self.patience,
-                mode="max",
-                min_delta=1e-3
-            ),
-            checkpoint,
-        ]
-        trainer = L.Trainer(
-            max_epochs=self.max_epochs,
-            accelerator=self.accelerator,
-            devices=1,
-            logger=logger,
-            callbacks=callbacks,
-            enable_progress_bar=True,
-        )
-        logging.info('Starting training process...')
-        fit_start = datetime.now(timezone.utc)
-        mlflow.log_metric('fit_start', fit_start.timestamp())
-        trainer.fit(self.model, datamodule=self.datamodule)
-        fit_end = datetime.now(timezone.utc)
-        mlflow.log_metric('fit_end', fit_end.timestamp())
-        mlflow.log_metric(
-            "fit_duration", (fit_end - fit_start).total_seconds())
-        self.log_model(tmp_dir, checkpoint)
-        logging.info('Training completed and model logged to MLFlow.')
-        shutil.rmtree(str(self.checkpoints_dir))
-
-        logging.info('Evaluating best model on datasets.')
-        dataloaders = {
-            'train': self.datamodule.train_dataloader(),
-        }
-        if self.val_query:
-            dataloaders['val'] = self.datamodule.val_dataloader()
-        if self.test_query:
-            dataloaders['test'] = self.datamodule.test_dataloader()
-        if self.predict_query:
-            dataloaders['predict'] = self.datamodule.predict_dataloader()
-
-        for dataset_type, dataloader in dataloaders.items():
-            logging.info(f'Evaluating best model on {dataset_type} dataset')
-            trainer.test(
-                model=self.model,
-                dataloaders=dataloader
-            )
-            metrics, metrics_df = self.model.compute_test_metrics()
-
-            self.metrics[dataset_type] = metrics
-            self.metrics_dfs[dataset_type] = metrics_df
-            self.model.test_metrics.reset()
-
-        self.log_metrics()
-        self.log_metrics_dfs(tmp_dir)
-        self.log_roc_figs()
-        self.log_tpr_fpr_figs()
-        end_start = datetime.now(timezone.utc).timestamp()
-        mlflow.log_metric('exec_end', end_start)
-        mlflow.log_metric("exec_duration", end_start - exec_start)
-
-    def log_model(self, tmp_dir: Path, checkpoint: ModelCheckpoint):
+    def log_model(self, tmp_dir: Path, checkpoint: ModelCheckpoint | None = None):
         sample_X, _ = self.datamodule.get_df_from_query(
             self.train_query, limit=10)
         with torch.no_grad():
@@ -218,12 +126,13 @@ class TrainingJob(MLFlowLoggedJob):
                 model_output=output.numpy()  # Convert to numpy for signature
             )
 
-        log_path = tmp_dir / self.MODEL_CKPT_PATH
-        shutil.copy(checkpoint.best_model_path, log_path)
-        mlflow.log_artifact(log_path)
+        if checkpoint is not None:
+            ckpt_path = tmp_dir / self.MODEL_CKPT_PATH
+            shutil.copy(checkpoint.best_model_path, ckpt_path)
+            mlflow.log_artifact(ckpt_path)
         mlflow.pytorch.log_model(
             pytorch_model=self.model,
-            name="ml_model",
+            name="model",
             signature=signature,
         )
         onnx_path = tmp_dir / 'model.onnx'
@@ -290,6 +199,100 @@ class TrainingJob(MLFlowLoggedJob):
         for dataset_type in self.metrics_dfs.keys():
             tpr_fpr_fig = self.plot_tpr_fpr_plot(dataset_type)
             mlflow.log_figure(tpr_fpr_fig, self.TPR_FPR_FIG_PATH_FORMAT.format(dataset_type=dataset_type))
+
+    def exec(self,
+             tmp_dir: Path,
+             experiment_name: str,
+             tracking_uri: str | None = None,
+             force: Literal['all', 'error'] | None = None):
+
+        exec_start = datetime.now(timezone.utc).timestamp()
+        mlflow.log_metric('exec_start', exec_start)
+
+        self.datamodule.log_to_mlflow()
+        class_weights = self.log_class_weights(tmp_dir)
+        self.model = MLP(dims=self.dims,
+                         class_weights=class_weights,
+                         activation=self.activation)
+        self.model.train()
+
+        logger = MLFlowLogger(
+            experiment_name=experiment_name,
+            run_name=self.name,
+            tracking_uri=tracking_uri,
+            run_id=self.id_
+        )
+
+        checkpoint = ModelCheckpoint(
+            monitor=self.monitor,  # Monitor a validation metric
+            dirpath=self.checkpoints_dir,  # Directory to save checkpoints
+            filename='best-model-{epoch:02d}-{val_max_sp:.2f}',
+            save_top_k=3,
+            mode="max",  # Save based on maximum validation accuracy
+            save_on_train_epoch_end=False
+        )
+
+        callbacks = [
+            EarlyStopping(
+                monitor=self.monitor,
+                patience=self.patience,
+                mode="max",
+                min_delta=1e-3
+            ),
+            checkpoint,
+        ]
+        trainer = L.Trainer(
+            max_epochs=self.max_epochs,
+            accelerator=self.accelerator,
+            devices=1,
+            logger=logger,
+            callbacks=callbacks,
+            enable_progress_bar=True,
+        )
+        logging.info('Starting training process...')
+        fit_start = datetime.now(timezone.utc)
+        mlflow.log_metric('fit_start', fit_start.timestamp())
+        trainer.fit(self.model, datamodule=self.datamodule)
+        fit_end = datetime.now(timezone.utc)
+        mlflow.log_metric('fit_end', fit_end.timestamp())
+        mlflow.log_metric(
+            "fit_duration", (fit_end - fit_start).total_seconds())
+        self.model = MLP.load_from_checkpoint(
+            checkpoint.best_model_path)
+        self.log_model(tmp_dir, checkpoint)
+        logging.info('Training completed and model logged to MLFlow.')
+        shutil.rmtree(str(self.checkpoints_dir))
+
+        logging.info('Evaluating best model on datasets.')
+        dataloaders = {
+            'train': self.datamodule.train_dataloader(),
+        }
+        if self.val_query:
+            dataloaders['val'] = self.datamodule.val_dataloader()
+        if self.test_query:
+            dataloaders['test'] = self.datamodule.test_dataloader()
+        if self.predict_query:
+            dataloaders['predict'] = self.datamodule.predict_dataloader()
+
+        for dataset_type, dataloader in dataloaders.items():
+            logging.info(f'Evaluating best model on {dataset_type} dataset')
+            trainer.test(
+                model=self.model,
+                dataloaders=dataloader
+            )
+            metrics, metrics_df = self.model.compute_test_metrics()
+
+            self.metrics[dataset_type] = metrics
+            self.metrics_dfs[dataset_type] = metrics_df
+            self.model.test_metrics.reset()
+
+        self.log_metrics()
+        self.log_metrics_dfs(tmp_dir)
+        self.log_roc_figs()
+        self.log_tpr_fpr_figs()
+        end_start = datetime.now(timezone.utc).timestamp()
+        mlflow.log_metric('exec_end', end_start)
+        mlflow.log_metric("exec_duration", end_start - exec_start)
 
 
 class KFoldTrainingJobChild(TypedDict):
@@ -582,6 +585,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         self.log_metrics_description(tmp_dir)
         self.best_job.log_class_weights(tmp_dir)
         # self.best_job.log_metrics(prefix='best_job.')
+        self.best_job.log_model(tmp_dir)
         self.best_job.log_metrics_dfs(tmp_dir)
         self.best_job.log_roc_figs()
         self.best_job.log_tpr_fpr_figs()

@@ -2,6 +2,7 @@ from functools import cached_property
 import duckdb
 from pathlib import Path
 import polars as pl
+import pandas as pd
 import lightning as L
 import torch
 # import pandas as pd
@@ -110,12 +111,18 @@ class DuckDBDeepONetRingerDataset(L.LightningDataModule):
                 filter=f'{self.fold_col} != {self.fold} AND {self.fold_col} >= 0'
             )
 
+    @cached_property
+    def model_signature_df(self) -> pd.DataFrame:
+        cols = self.branch_input + self.trunk_input
+        return self.train_df.select(cols).head(5)
+
     def preprocess_df(self, df: pl.DataFrame) -> pl.DataFrame:
         for col_name in self.to_scale:
             mean = self.scaler_params['mean'][col_name]
             std = self.scaler_params['std'][col_name]
             df = df.with_columns(
                 ((pl.col(col_name) - mean) / std)
+                .cast(pl.Float32)
                 .alias(col_name))
         ring_norms = df[self.rings].sum_horizontal().abs()
         ring_norms[ring_norms == 0] = 1
@@ -125,8 +132,7 @@ class DuckDBDeepONetRingerDataset(L.LightningDataModule):
     def get_dataloader(self, df: pl.DataFrame) -> torch.utils.data.DataLoader:
 
         dataset = torch.utils.data.TensorDataset(
-            df[self.branch_input].to_torch(dtype=pl.Float32),
-            df[self.trunk_input].to_torch(dtype=pl.Float32),
+            df[self.branch_input + self.trunk_input].to_torch(),
             df[self.label_col].to_torch()
         )
         return torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)

@@ -323,7 +323,6 @@ RUN_IDS_LIST_OPTION_TYPE_HELP = 'List of MLFlow run IDs to run'
 RunIdsListOptionType = Annotated[
     str,
     typer.Option(
-        "--run-ids",
         help=RUN_IDS_LIST_OPTION_TYPE_HELP,
     )
 ]
