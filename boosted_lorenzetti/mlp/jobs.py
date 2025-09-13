@@ -209,8 +209,10 @@ class TrainingJob(MLFlowLoggedJob):
         exec_start = datetime.now(timezone.utc).timestamp()
         mlflow.log_metric('exec_start', exec_start)
 
+        logging.info('Logging data module to mlflow')
         self.datamodule.log_to_mlflow()
         class_weights = self.log_class_weights(tmp_dir)
+        logging.info('Setting up training')
         self.model = MLP(dims=self.dims,
                          class_weights=class_weights,
                          activation=self.activation)
