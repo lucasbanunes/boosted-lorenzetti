@@ -29,18 +29,6 @@ from .. import mlflow as boosted_mlflow
 from ..utils import flatten_dict
 
 
-DB_PATH_OPTION_FIELD_HELP = "Path to the DuckDB database file."
-DbPathOptionField = Annotated[
-    Path,
-    Field(
-        description=DB_PATH_OPTION_FIELD_HELP,
-        example="data/database.duckdb"
-    ),
-    typer.Option(
-        help=DB_PATH_OPTION_FIELD_HELP,
-    )
-]
-
 TABLE_NAME_OPTION_FIELD_HELP = "Name of the table in the DuckDB database."
 TableNameOptionField = Annotated[
     str,
@@ -173,18 +161,6 @@ LabelColOptionField = Annotated[
     )
 ]
 
-LEARNING_RATE_OPTION_FIELD_HELP = "Learning rate for the optimizer."
-LearningRateOptionField = Annotated[
-    float,
-    Field(
-        description=LEARNING_RATE_OPTION_FIELD_HELP,
-        example=1e-3
-    ),
-    typer.Option(
-        help=LEARNING_RATE_OPTION_FIELD_HELP,
-    )
-]
-
 
 class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
 
@@ -197,7 +173,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
 
     name: jobs.NameType = 'MLP Unstacked DeepONet Training Job'
 
-    db_path: DbPathOptionField
+    db_path: types.DbPathOptionField
     table_name: TableNameOptionField
     ring_col: RingColOptionField
     et_col: EtColOptionField
@@ -210,7 +186,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
     trunk_activations: TrunkActivationsField
     fold_col: FoldColOptionField = 'fold'
     label_col: LabelColOptionField = 'label'
-    learning_rate: LearningRateOptionField = 1e-3
+    learning_rate: types.LearningRateOptionField = 1e-3
     batch_size: types.BatchSizeType = 32
     accelerator: types.AcceleratorType = 'cpu'
     patience: types.PatienceType = 10
@@ -290,6 +266,10 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
 
     def log_model(self, tmp_dir: Path, checkpoint: ModelCheckpoint | None = None):
         sample_X = self.datamodule.model_signature_df
+        scaler_path = tmp_dir / 'scaler_params.json'
+        with open(scaler_path, 'w') as f:
+            json.dump(self.datamodule.scaler_params, f, indent=4)
+        mlflow.log_artifact(scaler_path)
         with torch.no_grad():
             self.model.eval()
             output = self.model(sample_X.to_torch())
@@ -381,6 +361,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
 
         exec_start = datetime.now(timezone.utc).timestamp()
         mlflow.log_metric('exec_start', exec_start)
+        self.datamodule.log_to_mlflow()
         class_weights = self.log_class_weights(tmp_dir)
 
         self.model = MLPUnstackedDeepONetBinaryClassifier(
@@ -403,14 +384,14 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             dirpath=self.checkpoints_dir,  # Directory to save checkpoints
             filename='best-model-{epoch:02d}-{val_max_sp:.2f}',
             save_top_k=3,
-            mode="min",  # Save based on minimum validation loss,
+            mode="max",  # Save based on minimum validation loss,
             save_on_train_epoch_end=False
         )
         callbacks = [
             EarlyStopping(
                 monitor=self.monitor,
                 patience=self.patience,
-                mode="min",
+                mode="max",
                 check_on_train_epoch_end=False
             ),
             checkpoint,
@@ -422,7 +403,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             devices=1,
             logger=logger,
             callbacks=callbacks,
-            enable_progress_bar=False,
+            enable_progress_bar=True,
         )
         logging.info('Starting training process...')
         fit_start = datetime.now(timezone.utc)
@@ -482,7 +463,7 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
 
     name: jobs.NameType = 'K-Fold MLP Unstacked DeepONet Job'
 
-    db_path: DbPathOptionField
+    db_path: types.DbPathOptionField
     table_name: TableNameOptionField
     ring_col: RingColOptionField
     et_col: EtColOptionField
@@ -498,7 +479,7 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
     inits: types.InitsType = 1
     fold_col: FoldColOptionField = 'fold'
     label_col: LabelColOptionField = 'label'
-    learning_rate: LearningRateOptionField = 1e-3
+    learning_rate: types.LearningRateOptionField = 1e-3
     batch_size: types.BatchSizeType = 32
     accelerator: types.AcceleratorType = 'cpu'
     patience: types.PatienceType = 10
@@ -737,6 +718,7 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
                   var_name='metric')
         self.log_metrics(tmp_dir)
         self.log_metrics_description(tmp_dir)
+        self.best_job.log_model(tmp_dir)
         self.best_job.log_class_weights(tmp_dir)
         self.best_job.log_metrics_dfs(tmp_dir)
         self.best_job.log_roc_figs()

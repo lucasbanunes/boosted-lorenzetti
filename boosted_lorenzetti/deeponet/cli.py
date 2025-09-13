@@ -64,7 +64,7 @@ def parse_activations(activations: str) -> list[str | None]:
     help='Create a training run for a DeepONet model'
 )
 def create_training(
-    db_path: deeponet_jobs.DbPathOptionField,
+    db_path: types.DbPathOptionField,
     table_name: deeponet_jobs.TableNameOptionField,
     ring_col: deeponet_jobs.RingColOptionField,
     et_col: deeponet_jobs.EtColOptionField,
@@ -77,7 +77,7 @@ def create_training(
     trunk_activations: TrunkActivationsOption,
     fold_col: deeponet_jobs.FoldColOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['fold_col'].default,
     label_col: deeponet_jobs.LabelColOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['label_col'].default,
-    learning_rate: deeponet_jobs.LearningRateOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['learning_rate'].default,
+    learning_rate: types.LearningRateOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['learning_rate'].default,
     batch_size: types.BatchSizeType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['batch_size'].default,
     accelerator: types.AcceleratorType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['accelerator'].default,
     patience: types.PatienceType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['patience'].default,
@@ -165,7 +165,7 @@ def run_training(
     help='Create a K-Fold training run for an MLP model.'
 )
 def create_kfold(
-    db_path: deeponet_jobs.DbPathOptionField,
+    db_path: types.DbPathOptionField,
     table_name: deeponet_jobs.TableNameOptionField,
     ring_col: deeponet_jobs.RingColOptionField,
     et_col: deeponet_jobs.EtColOptionField,
@@ -181,7 +181,7 @@ def create_kfold(
     inits: types.InitsType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['inits'].default,
     fold_col: deeponet_jobs.FoldColOptionField = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['fold_col'].default,
     label_col: deeponet_jobs.LabelColOptionField = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['label_col'].default,
-    learning_rate: deeponet_jobs.LearningRateOptionField = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['learning_rate'].default,
+    learning_rate: types.LearningRateOptionField = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['learning_rate'].default,
     batch_size: types.BatchSizeType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['batch_size'].default,
     accelerator: types.AcceleratorType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['accelerator'].default,
     patience: types.PatienceType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['patience'].default,

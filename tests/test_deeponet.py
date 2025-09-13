@@ -77,7 +77,7 @@ def test_deeponet_kfold_training(test_dataset_path: Path):
     )
 
     cli.run_kfold(
-        run_id=run_id,
+        run_ids=run_id,
         experiment_name=experiment_name,
     )
 
