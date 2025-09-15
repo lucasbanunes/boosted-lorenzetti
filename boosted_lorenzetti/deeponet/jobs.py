@@ -682,7 +682,11 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
         self.metrics_description.to_csv(metrics_description_path, index=False)
         mlflow.log_artifact(str(metrics_description_path))
 
-    def update_best_job(self) -> MLPUnstackedDeepONetTrainingJob | None:
+    def update_best_job(self):
+        if self.best_metric not in self.metrics.columns:
+            logging.warning('Cannot determine best job.')
+            return
+
         if self.best_metric_mode == 'min':
             best_idx = self.metrics[self.best_metric].idxmin()
         elif self.best_metric_mode == 'max':
@@ -700,8 +704,6 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
     def update_metrics_from_children(self):
         if not self.children:
             raise RuntimeError('No child jobs to update metrics from.')
-        if self.metrics is not None:
-            return
         metrics = []
         for child in self.children:
             if not child['job'].metrics:

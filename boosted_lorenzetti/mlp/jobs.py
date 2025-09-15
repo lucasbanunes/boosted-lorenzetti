@@ -158,6 +158,9 @@ class TrainingJob(MLFlowLoggedJob):
         return cls(**kwargs)
 
     def log_model(self, tmp_dir: Path, checkpoint: ModelCheckpoint | None = None):
+        if self.model is None:
+            logging.warning('No model to log, skipping model logging.')
+            return
         sample_X, _ = self.datamodule.get_df_from_query(
             self.train_query, limit=10)
         with torch.no_grad():
