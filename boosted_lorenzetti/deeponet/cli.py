@@ -2,10 +2,15 @@ from typing import Annotated
 import mlflow
 import logging
 import typer
+import torch
+import polars as pl
+from pathlib import Path
+import duckdb
 
 from .. import types
 from .. import jobs
 from . import jobs as deeponet_jobs
+from .jobs import MLPUnstackedDeepONetTrainingJob
 
 
 app = typer.Typer(
@@ -273,6 +278,49 @@ def run_kfold(
         job.execute(experiment_name=experiment_name,
                     tracking_uri=tracking_uri,
                     force=force)
+
+
+@mlp_app.command(
+    help='Infers using a trained MLP Unstacked DeepONet model.'
+)
+def inference(
+    db_path: Path,
+    run_id: str,
+    table_name: str,
+    output_table: str | None = None,
+    filter: str | None = None,
+):
+    logging.info(f'Infers using MLP model with run ID: {run_id}')
+
+    job: MLPUnstackedDeepONetTrainingJob = MLPUnstackedDeepONetTrainingJob.from_mlflow_run_id(run_id)
+    job.model.eval()
+    model_inputs = job.datamodule.branch_input + job.datamodule.trunk_input
+    cols = ['id'] + model_inputs
+
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        relation = conn.table(table_name)
+        if filter:
+            relation = relation.filter(filter)
+        relation = relation.select(', '.join(cols))
+        data = relation.pl().with_columns(
+            pl.col(job.datamodule.eta_col).abs().alias(job.datamodule.eta_col)
+        )
+
+    data = job.datamodule.preprocess_df(data)
+
+    job.model.eval()
+    with torch.no_grad():
+        results: torch.Tensor = job.model(data[model_inputs].to_torch(dtype=pl.Float32))
+    threshold = job.metrics['train']['max_sp_thresh']
+    data = data.select('id') \
+        .with_columns(pl.Series('prediction', results.cpu().numpy().squeeze())) \
+        .with_columns(pl.Series('proba', torch.sigmoid(results).cpu().numpy().squeeze())) \
+        .with_columns(pl.when(pl.col('proba') >= threshold).then(1).otherwise(0).alias('predicted_label'))
+
+    if output_table is None:
+        return data
+
+    raise NotImplementedError('Saving to database not implemented yet.')
 
 
 app.add_typer(mlp_app)

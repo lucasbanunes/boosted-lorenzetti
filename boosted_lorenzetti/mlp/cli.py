@@ -3,9 +3,13 @@ import logging
 from typing import Annotated
 from pathlib import Path
 import mlflow
+import duckdb
+import torch
+import polars as pl
 
 from .. import types
 from .jobs import KFoldTrainingJob, TrainingJob
+from ..constants import N_RINGS
 
 app = typer.Typer(
     name='mlp',
@@ -201,3 +205,44 @@ def run_kfold(
         job.execute(experiment_name=experiment_name,
                     tracking_uri=tracking_uri,
                     force=force)
+
+
+@app.command(
+    help='Infers using a trained MLP model.'
+)
+def inference(
+    db_path: Path,
+    run_id: str,
+    ring_col: str,
+    table_name: str,
+    output_table: str | None = None,
+    filter: str | None = None,
+):
+    logging.info(f'Infers using MLP model with run ID: {run_id}')
+
+    job = TrainingJob.from_mlflow_run_id(run_id)
+    job.model.eval()
+    rings = [f'{ring_col}[{i+1}]/ring_norm as ring_{i}' for i in range(N_RINGS)]
+    cols = ['id', f'ringer_l1({ring_col}) as ring_norm'] + rings
+
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        relation = conn.table(table_name)
+        if filter:
+            relation = relation.filter(filter)
+        relation = relation.select(', '.join(cols))
+        data = relation.pl()
+
+    model_inputs = [f'ring_{i}' for i in range(N_RINGS)]
+    job.model.eval()
+    with torch.no_grad():
+        results: torch.Tensor = job.model(data[model_inputs].to_torch(dtype=pl.Float32))
+    threshold = job.metrics['train']['max_sp_thresh']
+    data = data.select('id') \
+        .with_columns(pl.Series('prediction', results.cpu().numpy().squeeze())) \
+        .with_columns(pl.Series('proba', torch.sigmoid(results).cpu().numpy().squeeze())) \
+        .with_columns(pl.when(pl.col('proba') >= threshold).then(1).otherwise(0).alias('predicted_label'))
+
+    if output_table is None:
+        return data
+
+    raise NotImplementedError('Saving to database not implemented yet.')

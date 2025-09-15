@@ -240,6 +240,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
 
     @classmethod
     def _from_mlflow_run(cls, run) -> 'MLPUnstackedDeepONetTrainingJob':
+        run_id = run.info.run_id
         kwargs = dict(
             db_path=run.data.params['db_path'],
             table_name=run.data.params['table_name'],
@@ -265,12 +266,27 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             metrics_dfs={},
         )
 
+        metrics = {dataset_type: {} for dataset_type in cls.DATASET_TYPES}
+        for metric_name, metric_value in run.data.metrics.items():
+            if '.' not in metric_name:
+                continue
+            dataset_type, metric = metric_name.split('.')
+            metrics[dataset_type][metric] = metric_value
+        kwargs['metrics'] = metrics
+
         for dataset_type in cls.DATASET_TYPES:
             metrics_path = cls.METRICS_DF_PATH_FORMAT.format(
                 dataset_type=dataset_type)
-            if boosted_mlflow.artifact_exists(run.info.run_id, metrics_path):
+            if boosted_mlflow.artifact_exists(run_id, metrics_path):
                 kwargs['metrics_dfs'][dataset_type] = boosted_mlflow.load_mlflow_csv(
                     run.info.run_id, metrics_path)
+
+        if boosted_mlflow.artifact_exists(run_id, cls.MODEL_CKPT_PATH):
+            kwargs['model'] = boosted_mlflow.load_model_from_checkpoint(
+                run_id,
+                cls.MODEL_CKPT_PATH,
+                MLPUnstackedDeepONetBinaryClassifier)
+
         return cls(**kwargs)
 
     def log_model(self, tmp_dir: Path, checkpoint: ModelCheckpoint | None = None):

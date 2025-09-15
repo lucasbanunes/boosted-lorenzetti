@@ -200,6 +200,7 @@ class MLFlowLoggedJob(BaseModel, ABC):
         instance.name = run.data.tags.get(
             'mlflow.runName', cls.model_fields['name'].default)
         instance.executed = bool(run.data.params.get('executed', False))
+        instance._mlflow_run = run
         return instance
 
     @classmethod
