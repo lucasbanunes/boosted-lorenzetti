@@ -345,7 +345,20 @@ class MLFlowLoggedJob(BaseModel, ABC):
         self.__refresh_cache()
 
 
-def load_job(run_id: str):
+def load_job(run_id: str) -> MLFlowLoggedJob:
+    """
+    Load a job from MLFlow using its run ID.
+
+    Parameters
+    ----------
+    run_id : str
+        The run ID of the job to load.
+
+    Returns
+    -------
+    Job
+        The loaded job.
+    """
     client = mlflow.MlflowClient()
     run = client.get_run(run_id)
     splitted_full_name = run.data.params['class_name'].split('.')
