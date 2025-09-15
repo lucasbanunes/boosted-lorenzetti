@@ -168,6 +168,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
     METRICS_DF_PATH_FORMAT: ClassVar[str] = '{dataset_type}_metrics.csv'
     ROC_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_roc_curve.html'
     TPR_FPR_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_tpr_fpr_curve.html'
+    DATASET_TYPES: ClassVar[list[str]] = ['train', 'val', 'test', 'predict']
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -213,7 +214,7 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             batch_size=self.batch_size
         )
 
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('table_name', self.table_name)
         mlflow.log_param('ring_col', self.ring_col)
@@ -261,7 +262,15 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
             checkpoints_dir=run.data.params['checkpoints_dir'],
             max_epochs=run.data.params['max_epochs'],
             monitor=run.data.params['monitor'],
+            metrics_dfs={},
         )
+
+        for dataset_type in cls.DATASET_TYPES:
+            metrics_path = cls.METRICS_DF_PATH_FORMAT.format(
+                dataset_type=dataset_type)
+            if boosted_mlflow.artifact_exists(run.info.run_id, metrics_path):
+                kwargs['metrics_dfs'][dataset_type] = boosted_mlflow.load_mlflow_csv(
+                    run.info.run_id, metrics_path)
         return cls(**kwargs)
 
     def log_model(self, tmp_dir: Path, checkpoint: ModelCheckpoint | None = None):
@@ -329,7 +338,8 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
     def log_roc_figs(self):
         for dataset_type in self.metrics_dfs.keys():
             roc_fig = self.plot_roc(dataset_type)
-            mlflow.log_figure(roc_fig, self.ROC_FIG_PATH_FORMAT.format(dataset_type=dataset_type))
+            mlflow.log_figure(roc_fig, self.ROC_FIG_PATH_FORMAT.format(
+                dataset_type=dataset_type))
 
     def plot_tpr_fpr_plot(self, dataset_type: str) -> go.Figure:
         tpr_fpr_fig = px.line(
@@ -351,7 +361,8 @@ class MLPUnstackedDeepONetTrainingJob(jobs.MLFlowLoggedJob):
     def log_tpr_fpr_figs(self):
         for dataset_type in self.metrics_dfs.keys():
             tpr_fpr_fig = self.plot_tpr_fpr_plot(dataset_type)
-            mlflow.log_figure(tpr_fpr_fig, self.TPR_FPR_FIG_PATH_FORMAT.format(dataset_type=dataset_type))
+            mlflow.log_figure(tpr_fpr_fig, self.TPR_FPR_FIG_PATH_FORMAT.format(
+                dataset_type=dataset_type))
 
     def exec(self,
              tmp_dir: Path,
@@ -526,9 +537,12 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
                     )
                 }
                 self.children.append(job_dict)
+        else:
+            self.update_metrics_from_children()
+            self.update_best_job()
         return super().model_post_init(context)
 
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('table_name', self.table_name)
         mlflow.log_param('ring_col', self.ring_col)
@@ -591,9 +605,11 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
             monitor=run.data.params['monitor']
         )
         if boosted_mlflow.artifact_exists(run_id, cls.METRICS_PATH):
+            logging.debug(f'Loading metrics from {cls.METRICS_PATH}')
             kwargs['metrics'] = boosted_mlflow.load_mlflow_csv(run_id,
                                                                cls.METRICS_PATH)
         if boosted_mlflow.artifact_exists(run_id, cls.METRICS_DESCRIPTION_PATH):
+            logging.debug(f'Loading metrics description from {cls.METRICS_DESCRIPTION_PATH}')
             kwargs['metrics_description'] = boosted_mlflow.load_mlflow_csv(run_id,
                                                                            cls.METRICS_DESCRIPTION_PATH)
 
@@ -650,6 +666,38 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
         self.metrics_description.to_csv(metrics_description_path, index=False)
         mlflow.log_artifact(str(metrics_description_path))
 
+    def update_best_job(self) -> MLPUnstackedDeepONetTrainingJob | None:
+        if self.best_metric_mode == 'min':
+            best_idx = self.metrics[self.best_metric].idxmin()
+        elif self.best_metric_mode == 'max':
+            best_idx = self.metrics[self.best_metric].idxmax()
+        else:
+            raise ValueError(
+                f'Unsupported best metric mode: {self.best_metric_mode}')
+
+        self.best_job_metrics = self.metrics.loc[best_idx].to_dict()
+        for child in self.children:
+            if child['job'].id_ == self.best_job_metrics['id']:
+                self.best_job = child['job']
+                return
+
+    def update_metrics_from_children(self):
+        if not self.children:
+            raise RuntimeError('No child jobs to update metrics from.')
+        if self.metrics is not None:
+            return
+        metrics = []
+        for child in self.children:
+            if not child['job'].metrics:
+                raise RuntimeError(
+                    f'Child job with fold {child["fold"]} and init {child["init"]} has no metrics.')
+            child_metrics = flatten_dict(child['job'].metrics)
+            child_metrics['id'] = child['job'].id_
+            child_metrics['fold'] = child['fold']
+            child_metrics['init'] = child['init']
+            metrics.append(child_metrics)
+        self.metrics = pd.DataFrame.from_records(metrics)
+
     def exec(self,
              tmp_dir: Path,
              experiment_name: str,
@@ -663,7 +711,6 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
         if not self.children:
             raise RuntimeError('No child training jobs found.')
 
-        metrics = []
         for child in self.children:
 
             child['job'].execute(
@@ -672,27 +719,9 @@ class KFoldMLPUnstackedDeepONetJob(jobs.MLFlowLoggedJob):
                 nested=True,
                 force=force
             )
-            children_metrics = flatten_dict(child['job'].metrics)
-            children_metrics['id'] = child['job'].id_
-            children_metrics['fold'] = child['fold']
-            children_metrics['init'] = child['init']
-            metrics.append(children_metrics)
 
-        self.metrics = pd.DataFrame.from_records(metrics)
-
-        if self.best_metric_mode == 'min':
-            best_idx = self.metrics[self.best_metric].idxmin()
-        elif self.best_metric_mode == 'max':
-            best_idx = self.metrics[self.best_metric].idxmax()
-        else:
-            raise ValueError(
-                f'Unsupported best metric mode: {self.best_metric_mode}')
-
-        self.best_job_metrics = self.metrics.loc[best_idx].to_dict()
-        for child in self.children:
-            if child['job'].id_ == self.best_job_metrics['id']:
-                self.best_job = child['job']
-                break
+        self.update_metrics_from_children()
+        self.update_best_job()
 
         logging.info(f'Best job found: run ID - {self.best_job_metrics["id"]}'
                      f' - fold - {self.best_job_metrics["fold"]} - init - {self.best_job_metrics["init"]}')

@@ -1,4 +1,5 @@
 from boosted_lorenzetti.mlp.cli import create_training, run_training, create_kfold, run_kfold
+from boosted_lorenzetti.mlp.jobs import KFoldTrainingJob
 from pathlib import Path
 import subprocess
 
@@ -94,6 +95,11 @@ def test_mlp_kfold_training(test_dataset_path: Path):
         run_id=run_id,
         experiment_name=experiment_name,
     )
+
+    loaded_job = KFoldTrainingJob.from_mlflow_run_id(run_id)
+    assert len(loaded_job.children) == 5 * 1, "Number of children does not match expected."
+    assert loaded_job.metrics is not None, "Metrics should not be None after training."
+    assert loaded_job.metrics_description is not None, "Metrics description should not be None after training."
 
 
 def test_mlp_create_kfold_cli(test_dataset_path: Path, repo_path: Path):

@@ -30,6 +30,21 @@ from ..constants import N_RINGS
 from ..utils import flatten_dict
 
 
+DEFAULT_TRAINING_JOB_METRICS = {
+    'train': {},
+    'val': {},
+    'test': {},
+    'predict': {}
+}
+
+DEFAULT_TRAINING_JOB_METRICS_DFS = {
+    'train': None,
+    'val': None,
+    'test': None,
+    'predict': None
+}
+
+
 class TrainingJob(MLFlowLoggedJob):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -38,6 +53,7 @@ class TrainingJob(MLFlowLoggedJob):
     METRICS_DF_PATH_FORMAT: ClassVar[str] = '{dataset_type}_metrics.csv'
     ROC_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_roc_curve.html'
     TPR_FPR_FIG_PATH_FORMAT: ClassVar[str] = '{dataset_type}_tpr_fpr_curve.html'
+    DATASET_TYPES: ClassVar[list[str]] = ['train', 'val', 'test', 'predict']
 
     db_path: types.DbPathOptionField
     train_query: str
@@ -56,8 +72,8 @@ class TrainingJob(MLFlowLoggedJob):
     monitor: types.MonitorOptionField = 'val_max_sp'
 
     model: MLP | None = None
-    metrics: Dict[str, Any] = {}
-    metrics_dfs: Dict[str, pd.DataFrame] = {}
+    metrics: Dict[str, dict[str, Any]] = DEFAULT_TRAINING_JOB_METRICS
+    metrics_dfs: Dict[str, pd.DataFrame] = DEFAULT_TRAINING_JOB_METRICS_DFS
 
     @cached_property
     def datamodule(self) -> MLPDataset:
@@ -70,7 +86,7 @@ class TrainingJob(MLFlowLoggedJob):
             label_cols=self.label_col,
             batch_size=self.batch_size)
 
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('train_query', self.train_query)
         mlflow.log_param('dims', json.dumps(self.dims))
@@ -86,6 +102,13 @@ class TrainingJob(MLFlowLoggedJob):
         mlflow.log_param('checkpoints_dir', str(self.checkpoints_dir))
         mlflow.log_param('max_epochs', self.max_epochs)
         mlflow.log_param('monitor', self.monitor)
+
+        self.log_class_weights(tmp_dir)
+        self.log_model(tmp_dir)
+        self.log_metrics()
+        self.log_metrics_dfs(tmp_dir)
+        self.log_roc_figs()
+        self.log_tpr_fpr_figs()
 
     @classmethod
     def _from_mlflow_run(cls, run) -> 'TrainingJob':
@@ -109,9 +132,29 @@ class TrainingJob(MLFlowLoggedJob):
         )
 
         if boosted_mlflow.artifact_exists(run_id, cls.MODEL_CKPT_PATH):
-            kwargs['model'] = MLP.load_from_checkpoint(
-                boosted_mlflow.download_artifact(run_id, cls.MODEL_CKPT_PATH)
+            kwargs['model'] = boosted_mlflow.load_model_from_checkpoint(
+                run_id,
+                cls.MODEL_CKPT_PATH,
+                MLP
             )
+
+        metrics = {dataset_type: {} for dataset_type in cls.DATASET_TYPES}
+        for metric_name, metric_value in run.data.metrics.items():
+            if '.' not in metric_name:
+                continue
+            dataset_type, metric = metric_name.split('.')
+            metrics[dataset_type][metric] = metric_value
+        kwargs['metrics'] = metrics
+
+        metrics_dfs = {}
+        for dataset_type in cls.DATASET_TYPES:
+            if boosted_mlflow.artifact_exists(run_id, cls.METRICS_DF_PATH_FORMAT.format(dataset_type=dataset_type)):
+                metrics_dfs[dataset_type] = boosted_mlflow.load_mlflow_csv(
+                    run_id,
+                    cls.METRICS_DF_PATH_FORMAT.format(
+                        dataset_type=dataset_type)
+                )
+        kwargs['metrics_dfs'] = metrics_dfs
         return cls(**kwargs)
 
     def log_model(self, tmp_dir: Path, checkpoint: ModelCheckpoint | None = None):
@@ -140,6 +183,7 @@ class TrainingJob(MLFlowLoggedJob):
         mlflow.log_artifact(str(onnx_path))
 
     def log_class_weights(self, tmp_dir: Path) -> np.ndarray:
+        self.datamodule.log_to_mlflow()
         class_weights = self.datamodule.get_class_weights(how='balanced')
         class_weights_path = tmp_dir / 'class_weights.json'
         with open(class_weights_path, 'w') as f:
@@ -153,9 +197,13 @@ class TrainingJob(MLFlowLoggedJob):
                 mlflow.log_metric(f"{prefix}{dataset_type}.{key}", value)
 
     def log_metrics_dfs(self, tmp_dir: Path):
-        for dataset_type in self.metrics_dfs.keys():
-            metrics_df_path = tmp_dir / self.METRICS_DF_PATH_FORMAT.format(dataset_type=dataset_type)
-            self.metrics_dfs[dataset_type].to_csv(metrics_df_path, index=False)
+        for dataset_type, metrics_df in self.metrics_dfs.items():
+            if metrics_df is None:
+                logging.warning(f'No metrics df for {dataset_type}, skipping logging.')
+                continue
+            metrics_df_path = tmp_dir / \
+                self.METRICS_DF_PATH_FORMAT.format(dataset_type=dataset_type)
+            metrics_df.to_csv(metrics_df_path, index=False)
             mlflow.log_artifact(str(metrics_df_path))
 
     def plot_roc(self, dataset_type: str) -> go.Figure:
@@ -174,9 +222,13 @@ class TrainingJob(MLFlowLoggedJob):
         return roc_fig
 
     def log_roc_figs(self):
-        for dataset_type in self.metrics_dfs.keys():
+        for dataset_type, metrics_df in self.metrics_dfs.items():
+            if metrics_df is None:
+                logging.warning(f'No metrics df for {dataset_type}, skipping ROC figure logging.')
+                continue
             roc_fig = self.plot_roc(dataset_type)
-            mlflow.log_figure(roc_fig, self.ROC_FIG_PATH_FORMAT.format(dataset_type=dataset_type))
+            mlflow.log_figure(roc_fig, self.ROC_FIG_PATH_FORMAT.format(
+                dataset_type=dataset_type))
 
     def plot_tpr_fpr_plot(self, dataset_type: str) -> go.Figure:
         tpr_fpr_fig = px.line(
@@ -196,9 +248,13 @@ class TrainingJob(MLFlowLoggedJob):
         return tpr_fpr_fig
 
     def log_tpr_fpr_figs(self):
-        for dataset_type in self.metrics_dfs.keys():
+        for dataset_type, metrics_df in self.metrics_dfs.items():
+            if metrics_df is None:
+                logging.warning(f'No metrics df for {dataset_type}, skipping TPR/FPR figure logging.')
+                continue
             tpr_fpr_fig = self.plot_tpr_fpr_plot(dataset_type)
-            mlflow.log_figure(tpr_fpr_fig, self.TPR_FPR_FIG_PATH_FORMAT.format(dataset_type=dataset_type))
+            mlflow.log_figure(tpr_fpr_fig, self.TPR_FPR_FIG_PATH_FORMAT.format(
+                dataset_type=dataset_type))
 
     def exec(self,
              tmp_dir: Path,
@@ -210,7 +266,6 @@ class TrainingJob(MLFlowLoggedJob):
         mlflow.log_metric('exec_start', exec_start)
 
         logging.info('Logging data module to mlflow')
-        self.datamodule.log_to_mlflow()
         class_weights = self.log_class_weights(tmp_dir)
         logging.info('Setting up training')
         self.model = MLP(dims=self.dims,
@@ -249,7 +304,7 @@ class TrainingJob(MLFlowLoggedJob):
             devices=1,
             logger=logger,
             callbacks=callbacks,
-            enable_progress_bar=True,
+            enable_progress_bar=False,
         )
         logging.info('Starting training process...')
         fit_start = datetime.now(timezone.utc)
@@ -313,7 +368,8 @@ class KFoldTrainingJob(MLFlowLoggedJob):
     METRICS_PATH: ClassVar[str] = 'kfold_metrics.csv'
     METRICS_DESCRIPTION_PATH: ClassVar[str] = 'kfold_metrics_description.csv'
     BEST_METRIC_BOX_PLOT_PATH: ClassVar[str] = '{best_metric}_box_plot.html'
-    POSSIBLE_DATATYPES: ClassVar[list[str]] = ['train', 'val', 'test', 'predict']
+    POSSIBLE_DATATYPES: ClassVar[list[str]] = [
+        'train', 'val', 'test', 'predict']
 
     db_path: Path
     ring_col: str
@@ -345,10 +401,15 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         # if self.n_jobs < 1:
         #     raise ValueError(f'n_jobs must be at least 1, received {self.n_jobs}')
 
-        if not self.children:
-            feature_cols_str = ', '.join([f'{self.ring_col}[{i+1}]' for i in range(N_RINGS)])
+        if self.children:
+            if self.executed:
+                self.update_metrics()
+        else:
+            feature_cols_str = ', '.join(
+                [f'{self.ring_col}[{i+1}]' for i in range(N_RINGS)])
             for init, fold in product(range(self.inits), range(self.folds)):
-                job_checkpoint_dir = self.checkpoints_dir / f'fold_{fold}_init_{init}'
+                job_checkpoint_dir = self.checkpoints_dir / \
+                    f'fold_{fold}_init_{init}'
                 job_dict = {
                     'init': init,
                     'fold': fold,
@@ -389,7 +450,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                 self.children.append(job_dict)
         return super().model_post_init(context)
 
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('ring_col', self.ring_col)
         mlflow.log_param('dims', json.dumps(self.dims))
@@ -414,7 +475,15 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                 'init': str(child['init']),
             }
             child['job'].to_mlflow(nested=True, tags=tags)
-        # mlflow.log_param('n_jobs', self.n_jobs)
+        if self.executed:
+            self.log_metrics(tmp_dir)
+            self.log_metrics_description(tmp_dir)
+            self.best_job.log_class_weights(tmp_dir)
+            # self.best_job.log_metrics(prefix='best_job.')
+            self.best_job.log_model(tmp_dir)
+            self.best_job.log_metrics_dfs(tmp_dir)
+            self.best_job.log_roc_figs()
+            self.best_job.log_tpr_fpr_figs()
 
     @classmethod
     def _from_mlflow_run(cls, run) -> 'TrainingJob':
@@ -438,14 +507,8 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             checkpoints_dir=run.data.params['checkpoints_dir'],
             max_epochs=run.data.params['max_epochs'],
             monitor=run.data.params['monitor'],
-            # n_jobs=run.data.params['n_jobs']
+            executed=bool(run.data.params.get('executed', False))
         )
-        if boosted_mlflow.artifact_exists(run_id, cls.METRICS_PATH):
-            kwargs['metrics'] = boosted_mlflow.load_mlflow_csv(run_id,
-                                                               cls.METRICS_PATH)
-        if boosted_mlflow.artifact_exists(run_id, cls.METRICS_DESCRIPTION_PATH):
-            kwargs['metrics_description'] = boosted_mlflow.load_mlflow_csv(run_id,
-                                                                           cls.METRICS_DESCRIPTION_PATH)
 
         client = mlflow.MlflowClient()
         children_runs = client.search_runs(
@@ -481,70 +544,38 @@ class KFoldTrainingJob(MLFlowLoggedJob):
         return fig
 
     def log_metrics(self, tmp_dir: Path):
-        metrics_path = tmp_dir / self.METRICS_PATH
-        self.metrics.to_csv(metrics_path, index=False)
-        mlflow.log_artifact(str(metrics_path))
-        box_plot_artifact = self.BEST_METRIC_BOX_PLOT_PATH.format(best_metric=self.best_metric)
-        fig = self.make_box_plot()
-        mlflow.log_figure(fig, box_plot_artifact)
+        if isinstance(self.metrics, pd.DataFrame):
+            metrics_path = tmp_dir / self.METRICS_PATH
+            self.metrics.to_csv(metrics_path, index=False)
+            mlflow.log_artifact(str(metrics_path))
+            box_plot_artifact = self.BEST_METRIC_BOX_PLOT_PATH.format(
+                best_metric=self.best_metric)
+            fig = self.make_box_plot()
+            mlflow.log_figure(fig, box_plot_artifact)
 
-        for key, value in self.best_job_metrics.items():
-            if isinstance(value, str):
-                mlflow.log_param(f'best_job.{key}', value)
-            else:
-                mlflow.log_metric(f'best_job.{key}', value)
+        if isinstance(self.best_job_metrics, dict):
+            for key, value in self.best_job_metrics.items():
+                if isinstance(value, str):
+                    mlflow.log_param(f'best_job.{key}', value)
+                else:
+                    mlflow.log_metric(f'best_job.{key}', value)
 
     def log_metrics_description(self, tmp_dir: Path):
+        if not isinstance(self.metrics_description, pd.DataFrame):
+            return
         metrics_description_path = tmp_dir / self.METRICS_DESCRIPTION_PATH
         self.metrics_description.to_csv(metrics_description_path, index=False)
         mlflow.log_artifact(str(metrics_description_path))
 
-    def exec(self,
-             tmp_dir: Path,
-             experiment_name: str,
-             tracking_uri: str | None = None,
-             force: Literal['all', 'error'] | None = None):
-
-        exec_start = datetime.now(timezone.utc).timestamp()
-        mlflow.log_metric('exec_start', exec_start)
-        logging.info(
-            f'Starting K-Fold training job with run ID: {self.id_} in experiment: {experiment_name}')
-        if not self.children:
-            raise RuntimeError('No child training jobs found.')
+    def update_metrics(self):
 
         metrics = []
-        # if self.n_jobs == 1:
         for child in self.children:
-
-            child['job'].execute(
-                experiment_name=experiment_name,
-                tracking_uri=tracking_uri,
-                nested=True,
-                force=False
-            )
-            children_metrics = flatten_dict(child['job'].metrics)
-            children_metrics['id'] = child['job'].id_
-            children_metrics['fold'] = child['fold']
-            children_metrics['init'] = child['init']
-            metrics.append(children_metrics)
-        # else:
-        #     def run_child(child: KFoldTrainingJobChild) -> Dict[str, Any]:
-        #         child['job'].execute(
-        #             experiment_name=experiment_name,
-        #             tracking_uri=tracking_uri,
-        #             nested=True,
-        #             force=False
-        #         )
-        #         children_metrics = flatten_dict(child['job'].metrics)
-        #         children_metrics['id'] = child['job'].id_
-        #         children_metrics['fold'] = child['fold']
-        #         children_metrics['init'] = child['init']
-        #         return children_metrics
-
-        #     metrics = joblib.Parallel(n_jobs=self.n_jobs)(
-        #         joblib.delayed(run_child)(child) for child in self.children
-        #     )
-
+            child_metrics = flatten_dict(child['job'].metrics)
+            child_metrics['id'] = child['job'].id_
+            child_metrics['fold'] = child['fold']
+            child_metrics['init'] = child['init']
+            metrics.append(child_metrics)
         self.metrics = pd.DataFrame.from_records(metrics)
 
         if self.best_metric_mode == 'min':
@@ -561,8 +592,8 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                 self.best_job = child['job']
                 break
 
-        logging.info(f'Best job found: run ID - {self.best_job_metrics["id"]}'
-                     f' - fold - {self.best_job_metrics["fold"]} - init - {self.best_job_metrics["init"]}')
+        logging.debug(f'Best job found: run ID - {self.best_job_metrics["id"]}'
+                      f' - fold - {self.best_job_metrics["fold"]} - init - {self.best_job_metrics["init"]}')
 
         aggregation_dict = dict()
         for metric in self.metrics.columns:
@@ -583,6 +614,28 @@ class KFoldTrainingJob(MLFlowLoggedJob):
             .reset_index() \
             .melt(id_vars='fold',
                   var_name='metric')
+
+    def exec(self,
+             tmp_dir: Path,
+             experiment_name: str,
+             tracking_uri: str | None = None,
+             force: Literal['all', 'error'] | None = None):
+
+        exec_start = datetime.now(timezone.utc).timestamp()
+        mlflow.log_metric('exec_start', exec_start)
+        logging.info(
+            f'Starting K-Fold training job with run ID: {self.id_} in experiment: {experiment_name}')
+        if not self.children:
+            raise RuntimeError('No child training jobs found.')
+        # if self.n_jobs == 1:
+        for child in self.children:
+            child['job'].execute(
+                experiment_name=experiment_name,
+                tracking_uri=tracking_uri,
+                nested=True,
+                force=False
+            )
+        self.update_metrics()
         self.log_metrics(tmp_dir)
         self.log_metrics_description(tmp_dir)
         self.best_job.log_class_weights(tmp_dir)

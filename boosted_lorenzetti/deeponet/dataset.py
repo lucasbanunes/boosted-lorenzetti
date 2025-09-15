@@ -66,7 +66,7 @@ class DuckDBDeepONetRingerDataset(L.LightningDataModule):
         self.val_query = f"""
         SELECT {self.et_col}, {self.eta_col}, {self.pileup_col}, {', '.join(self.rings)}, {self.label_col}
         FROM {self.table_name}
-        WHERE {self.fold_col} = {self.fold};"""
+        WHERE {self.fold_col} = {self.fold} AND {self.fold_col} >= 0;"""
 
         with duckdb.connect(self.db_path) as conn:
             self.train_df = conn.execute(self.train_query).pl().with_columns(

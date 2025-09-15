@@ -73,7 +73,7 @@ class TrainingJob(MLFlowLoggedJob):
             label_cols=self.label_col,
             batch_size=self.batch_size)
 
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('dims', json.dumps(self.dims))
         mlflow.log_param('train_query', self.train_query)
@@ -397,7 +397,7 @@ class KFoldTrainingJob(MLFlowLoggedJob):
                 self.children.append(job_dict)
         return super().model_post_init(context)
 
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('ring_col', self.ring_col)
         mlflow.log_param('dims', json.dumps(self.dims))
