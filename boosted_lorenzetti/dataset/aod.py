@@ -623,6 +623,7 @@ def sample_generator(input_file: str | Path | Iterable[Path] | Iterable[str] | R
         for file in open_directories(input_file, file_ext='root'):
             chain.Add(str(file))
     for event in chain:
+        logging.debug(f'Processing event {event.EventInfoContainer_Events[0].eventNumber}')
         yield event_as_python(event)
 
 
@@ -647,6 +648,7 @@ def to_dict(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChai
     data = defaultdict(list)
     for event in sample_generator(input_file, ttree_name):
         for col_name, value in event.items():
+            logging.debug(f'Appending {col_name} with {value}')
             data[col_name].append(value)
     return data
 
@@ -670,6 +672,7 @@ def to_pdf(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChain
     """
     data = to_dict(input_file, ttree_name)
     data = pd.DataFrame.from_dict(data)
+    logging.debug(f'Data keys: {data.keys()}')
     for field_name in PYARROW_SCHEMA.names:
         data[field_name] = data[field_name].astype(
             pd.ArrowDtype(PYARROW_SCHEMA.field(field_name).type))

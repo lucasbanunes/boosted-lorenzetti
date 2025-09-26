@@ -10,7 +10,7 @@ from boosted_lorenzetti.dataset.aod import app as aod_app
 
 from boosted_lorenzetti.utils import set_logger
 
-set_logger()
+set_logger(level='INFO')
 
 
 app = typer.Typer(
