@@ -3,6 +3,9 @@ import ROOT
 import pandas as pd
 
 
+TREE_IO_ERROR_MSG = 'TTree I/O error'
+
+
 def rdf_column_names(rdf: ROOT.RDataFrame) -> List[str]:
     """
     Get the column names of a RDataFrame.
@@ -92,25 +95,3 @@ def open_vector(column: str, vec_len: int, rdf: ROOT.RDataFrame
         column_names.append(new_name)
     return column_names, rdf
 
-
-def parse_inf(value: str) -> str:
-    """
-    Parse a string that can be 'inf' to 1000000000 (1 billion).
-    This is needed since ROOT does not support 'inf' as a value.
-
-    Parameters
-    ----------
-    value : str
-        The value to parse.
-
-    Returns
-    -------
-    str
-        The parsed value.
-    """
-    if value == 'inf':
-        return '1000000000'
-    elif value == '-inf':
-        return '-1000000000'
-    else:
-        return value

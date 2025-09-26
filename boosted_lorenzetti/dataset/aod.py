@@ -11,6 +11,7 @@ import logging
 
 
 from ..utils import open_directories
+from ..root import TREE_IO_ERROR_MSG
 from . import duckdb as bl_duckdb
 
 
@@ -595,6 +596,10 @@ def event_as_python(event):
     return new_data
 
 
+def check_file_integrity(file_path: str | Path) -> bool:
+    raise NotImplementedError("File integrity check not implemented yet.")
+
+
 app = typer.Typer(
     name='aod',
     help="AOD file conversion utilities",
@@ -619,11 +624,19 @@ def sample_generator(input_file: str | Path | Iterable[Path] | Iterable[str] | R
         Individual AOD events converted to Python dictionary format.
     """
     if not isinstance(input_file, ROOT.TChain):
-        chain = ROOT.TChain(ttree_name)
-        for file in open_directories(input_file, file_ext='root'):
-            chain.Add(str(file))
-    for event in chain:
-        yield event_as_python(event)
+        for filepath in open_directories(input_file, file_ext='root'):
+            with ROOT.TFile(str(filepath)) as file:
+                tree = file[ttree_name]
+                try:
+                    for event in tree:
+                        yield event_as_python(event)
+                except RuntimeError as e:
+                    if str(e) == TREE_IO_ERROR_MSG:
+                        logging.error(f"Error opening file {file} or accessing TTree {ttree_name}: {e}")
+                        continue
+                    else:
+                        raise e
+
 
 
 def to_dict(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChain,
