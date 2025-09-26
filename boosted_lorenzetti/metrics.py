@@ -197,6 +197,7 @@ class MaxSPMetrics(BinaryROC):
 
     def compute(self):
         fpr, tpr, thresh = super().compute()
+        auc = torch.trapezoid(tpr, fpr)
         sp = sp_index_pytorch(tpr, fpr)
         max_sp_index = sp.argmax()
         sp = sp[max_sp_index]
@@ -208,7 +209,6 @@ class MaxSPMetrics(BinaryROC):
         fn = (1 - tpr) * self.positives
         thresh = thresh[max_sp_index]
         acc = (tp + tn) / (tp + tn + fp + fn)
-        auc = torch.trapezoid(tpr, fpr)
         return acc, sp, auc, fpr, tpr, tp, tn, fp, fn, thresh
 
     def compute_arrays(self):
@@ -228,11 +228,11 @@ class MaxSPMetrics(BinaryROC):
             'tn': tn,
             'fp': fp,
             'fn': fn,
-            'thresh': thresholds
+            'thresholds': thresholds
         }
 
 
-class BCEWithLogitsLossMetric(Metric):
+class BCELossMetric(Metric):
 
     def __init__(self, reduction: Literal['mean', 'sum'] = 'mean'):
         super().__init__()
@@ -243,10 +243,10 @@ class BCEWithLogitsLossMetric(Metric):
                        dist_reduce_fx='sum')
 
     def update(self, preds: torch.Tensor, target: torch.Tensor):
-        loss = F.binary_cross_entropy_with_logits(
-            preds, target, reduction=self.reduction)
+        loss = F.binary_cross_entropy(
+            preds, target.float(), reduction=self.reduction)
         self.bce_sum += loss
-        self.n_samples += len(preds)
+        self.n_samples += 1
 
     def compute(self) -> torch.Tensor:
         if self.reduction == 'mean':

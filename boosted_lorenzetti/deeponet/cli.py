@@ -1,0 +1,326 @@
+from typing import Annotated
+import mlflow
+import logging
+import typer
+import torch
+import polars as pl
+from pathlib import Path
+import duckdb
+
+from .. import types
+from .. import jobs
+from . import jobs as deeponet_jobs
+from .jobs import MLPUnstackedDeepONetTrainingJob
+
+
+app = typer.Typer(
+    name='deeponet',
+    help='Utility for training DeepONet models on electron classification data.'
+)
+
+
+BranchDimsOption = Annotated[
+    str,
+    typer.Option(
+        help=deeponet_jobs.BRANCH_DIMS_OPTION_FIELD_HELP
+    )
+]
+
+BranchActivationsOption = Annotated[
+    str,
+    typer.Option(
+        help=deeponet_jobs.BRANCH_ACTIVATIONS_OPTION_FIELD_HELP
+    ),
+]
+
+TrunkDimsOption = Annotated[
+    str,
+    typer.Option(
+        help=deeponet_jobs.TRUNK_DIMS_OPTION_FIELD_HELP
+    )
+]
+
+TrunkActivationsOption = Annotated[
+    str,
+    typer.Option(
+        help=deeponet_jobs.TRUNK_ACTIVATIONS_OPTION_FIELD_HELP
+    )
+]
+
+
+mlp_app = typer.Typer(
+    name='mlp',
+    help='Utilities for training MLP based deeponets models on electron classification data.'
+)
+
+
+def parse_activations(activations: str) -> list[str | None]:
+    activations_list = []
+    for a in activations.split(','):
+        a = a.strip()
+        if a.lower() == 'none':
+            activations_list.append(None)
+        else:
+            activations_list.append(a)
+    return activations_list
+
+
+@mlp_app.command(
+    help='Create a training run for a DeepONet model'
+)
+def create_training(
+    db_path: types.DbPathOptionField,
+    table_name: deeponet_jobs.TableNameOptionField,
+    ring_col: deeponet_jobs.RingColOptionField,
+    et_col: deeponet_jobs.EtColOptionField,
+    eta_col: deeponet_jobs.EtaColOptionField,
+    pileup_col: deeponet_jobs.PileupColOptionField,
+    fold: deeponet_jobs.FoldOptionField,
+    branch_dims: BranchDimsOption,
+    branch_activations: BranchActivationsOption,
+    trunk_dims: TrunkDimsOption,
+    trunk_activations: TrunkActivationsOption,
+    fold_col: deeponet_jobs.FoldColOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['fold_col'].default,
+    label_col: deeponet_jobs.LabelColOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['label_col'].default,
+    learning_rate: types.LearningRateOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['learning_rate'].default,
+    batch_size: types.BatchSizeType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['batch_size'].default,
+    accelerator: types.AcceleratorType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['accelerator'].default,
+    patience: types.PatienceType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['patience'].default,
+    checkpoints_dir: types.CheckpointsDirType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['checkpoints_dir'].default,
+    max_epochs: types.MaxEpochsType = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['max_epochs'].default,
+    monitor: types.MonitorOptionField = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.model_fields['monitor'].default,
+    tracking_uri: types.TrackingUriType = None,
+    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
+):
+    if isinstance(branch_dims, str):
+        branch_dims = [int(d.strip()) for d in branch_dims.split(',')]
+    if isinstance(trunk_dims, str):
+        trunk_dims = [int(d.strip()) for d in trunk_dims.split(',')]
+    if isinstance(branch_activations, str):
+        branch_activations = parse_activations(branch_activations)
+    if isinstance(trunk_activations, str):
+        trunk_activations = parse_activations(trunk_activations)
+
+    logging.debug('Setting MLFlow tracking URI and experiment name.')
+
+    if tracking_uri is None or not tracking_uri:
+        tracking_uri = mlflow.get_tracking_uri()
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(experiment_name)
+
+    job = deeponet_jobs.MLPUnstackedDeepONetTrainingJob(
+        db_path=db_path,
+        table_name=table_name,
+        ring_col=ring_col,
+        et_col=et_col,
+        eta_col=eta_col,
+        pileup_col=pileup_col,
+        fold=fold,
+        branch_dims=branch_dims,
+        branch_activations=branch_activations,
+        trunk_dims=trunk_dims,
+        trunk_activations=trunk_activations,
+        fold_col=fold_col,
+        label_col=label_col,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        accelerator=accelerator,
+        patience=patience,
+        checkpoints_dir=checkpoints_dir,
+        max_epochs=max_epochs,
+        monitor=monitor,
+        tracking_uri=tracking_uri,
+        experiment_name=experiment_name
+    )
+    run_id = job.to_mlflow()
+    logging.info(f'Created training job with run ID: {run_id}')
+
+    return run_id
+
+
+@mlp_app.command(
+    help='Run a training job given its MLFlow run ID'
+)
+def run_training(
+    run_ids: types.RunIdsListOptionType,
+    tracking_uri: types.TrackingUriType = None,
+    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
+):
+    logging.debug(
+        f'Tracking URI: {tracking_uri}, Experiment Name: {experiment_name}')
+    if isinstance(run_ids, str):
+        run_ids = [run_id.strip() for run_id in run_ids.split(',')]
+
+    if tracking_uri is None or not tracking_uri:
+        tracking_uri = mlflow.get_tracking_uri()
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(experiment_name)
+
+    if isinstance(run_ids, str):
+        run_ids = [run_ids]
+
+    for run_id in run_ids:
+        logging.info(f'Running training job with run ID: {run_id}')
+        job = deeponet_jobs.MLPUnstackedDeepONetTrainingJob.from_mlflow_run_id(run_id)
+        job.execute(experiment_name=experiment_name,
+                    tracking_uri=tracking_uri)
+
+
+@mlp_app.command(
+    help='Create a K-Fold training run for an MLP model.'
+)
+def create_kfold(
+    db_path: types.DbPathOptionField,
+    table_name: deeponet_jobs.TableNameOptionField,
+    ring_col: deeponet_jobs.RingColOptionField,
+    et_col: deeponet_jobs.EtColOptionField,
+    eta_col: deeponet_jobs.EtaColOptionField,
+    pileup_col: deeponet_jobs.PileupColOptionField,
+    branch_dims: BranchDimsOption,
+    branch_activations: BranchActivationsOption,
+    trunk_dims: TrunkDimsOption,
+    trunk_activations: TrunkActivationsOption,
+    best_metric: types.BestMetricType,
+    best_metric_mode: types.BestMetricModeType,
+    folds: types.FoldsType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['folds'].default,
+    inits: types.InitsType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['inits'].default,
+    fold_col: deeponet_jobs.FoldColOptionField = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['fold_col'].default,
+    label_col: deeponet_jobs.LabelColOptionField = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['label_col'].default,
+    learning_rate: types.LearningRateOptionField = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['learning_rate'].default,
+    batch_size: types.BatchSizeType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['batch_size'].default,
+    accelerator: types.AcceleratorType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['accelerator'].default,
+    patience: types.PatienceType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['patience'].default,
+    checkpoints_dir: types.CheckpointsDirType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['checkpoints_dir'].default,
+    max_epochs: types.MaxEpochsType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['max_epochs'].default,
+    monitor: types.MonitorOptionField = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['monitor'].default,
+    name: jobs.NameType = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.model_fields['name'].default,
+    tracking_uri: types.TrackingUriType = None,
+    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
+
+) -> str:
+
+    if isinstance(branch_dims, str):
+        branch_dims = [int(d.strip()) for d in branch_dims.split(',')]
+    if isinstance(trunk_dims, str):
+        trunk_dims = [int(d.strip()) for d in trunk_dims.split(',')]
+    if isinstance(branch_activations, str):
+        branch_activations = parse_activations(branch_activations)
+    if isinstance(trunk_activations, str):
+        trunk_activations = parse_activations(trunk_activations)
+
+    logging.debug('Setting MLFlow tracking URI and experiment name.')
+
+    if tracking_uri is None or not tracking_uri:
+        tracking_uri = mlflow.get_tracking_uri()
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(experiment_name)
+
+    job = deeponet_jobs.KFoldMLPUnstackedDeepONetJob(
+        name=name,
+        db_path=db_path,
+        table_name=table_name,
+        ring_col=ring_col,
+        et_col=et_col,
+        eta_col=eta_col,
+        pileup_col=pileup_col,
+        branch_dims=branch_dims,
+        branch_activations=branch_activations,
+        trunk_dims=trunk_dims,
+        trunk_activations=trunk_activations,
+        best_metric=best_metric,
+        best_metric_mode=best_metric_mode,
+        folds=folds,
+        inits=inits,
+        fold_col=fold_col,
+        label_col=label_col,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        accelerator=accelerator,
+        patience=patience,
+        checkpoints_dir=checkpoints_dir,
+        max_epochs=max_epochs,
+        monitor=monitor,
+        # n_jobs=n_jobs
+    )
+
+    run_id = job.to_mlflow()
+    logging.info(f'Created K-Fold training job with run ID: {run_id}')
+
+    return run_id
+
+
+@mlp_app.command(
+    help='Train an MLP model using K-Fold cross-validation.'
+)
+def run_kfold(
+    run_ids: types.RunIdsListOptionType,
+    tracking_uri: types.TrackingUriType = None,
+    experiment_name: types.ExperimentNameType = 'boosted-lorenzetti',
+    force: str | None = None
+):
+    logging.info(f'Running K-Fold training job with run IDs: {run_ids}')
+    logging.debug(
+        f'Tracking URI: {tracking_uri}, Experiment Name: {experiment_name}')
+
+    if tracking_uri is None or not tracking_uri:
+        tracking_uri = mlflow.get_tracking_uri()
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(experiment_name)
+
+    if isinstance(run_ids, str):
+        run_ids = [id_.strip() for id_ in run_ids.split(',')]
+
+    for id_ in run_ids:
+        logging.info(f'Running K-Fold training job with run ID: {id_}')
+
+        job = deeponet_jobs.KFoldMLPUnstackedDeepONetJob.from_mlflow_run_id(id_)
+
+        job.execute(experiment_name=experiment_name,
+                    tracking_uri=tracking_uri,
+                    force=force)
+
+
+@mlp_app.command(
+    help='Infers using a trained MLP Unstacked DeepONet model.'
+)
+def inference(
+    db_path: Path,
+    run_id: str,
+    table_name: str,
+    output_table: str | None = None,
+    filter: str | None = None,
+):
+    logging.info(f'Infers using MLP model with run ID: {run_id}')
+
+    job: MLPUnstackedDeepONetTrainingJob = MLPUnstackedDeepONetTrainingJob.from_mlflow_run_id(run_id)
+    job.model.eval()
+    model_inputs = job.datamodule.branch_input + job.datamodule.trunk_input
+    cols = ['id'] + model_inputs
+
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        relation = conn.table(table_name)
+        if filter:
+            relation = relation.filter(filter)
+        relation = relation.select(', '.join(cols))
+        data = relation.pl().with_columns(
+            pl.col(job.datamodule.eta_col).abs().alias(job.datamodule.eta_col)
+        )
+
+    data = job.datamodule.preprocess_df(data)
+
+    job.model.eval()
+    with torch.no_grad():
+        results: torch.Tensor = job.model(data[model_inputs].to_torch(dtype=pl.Float32))
+    threshold = job.metrics['train']['max_sp_thresh']
+    data = data.select('id') \
+        .with_columns(pl.Series('prediction', results.cpu().numpy().squeeze())) \
+        .with_columns(pl.Series('proba', torch.sigmoid(results).cpu().numpy().squeeze())) \
+        .with_columns(pl.when(pl.col('proba') >= threshold).then(1).otherwise(0).alias('predicted_label'))
+
+    if output_table is None:
+        return data
+
+    raise NotImplementedError('Saving to database not implemented yet.')
+
+
+app.add_typer(mlp_app)

@@ -10,6 +10,7 @@ from datetime import datetime
 from contextlib import contextmanager
 import numpy as np
 import typer
+import importlib
 
 from .utils import fullname
 
@@ -198,6 +199,8 @@ class MLFlowLoggedJob(BaseModel, ABC):
         instance.id_ = run.info.run_id
         instance.name = run.data.tags.get(
             'mlflow.runName', cls.model_fields['name'].default)
+        instance.executed = bool(run.data.params.get('executed', False))
+        instance._mlflow_run = run
         return instance
 
     @classmethod
@@ -283,13 +286,16 @@ class MLFlowLoggedJob(BaseModel, ABC):
                               description=self.description,
                               nested=nested,
                               tags=tags) as run:
-            class_name = fullname(self)
-            mlflow.log_param('class_name', class_name)
-            self._to_mlflow()
+            with TemporaryDirectory() as tmp_dir:
+                tmp_dir = Path(tmp_dir)
+                class_name = fullname(self)
+                mlflow.log_param('class_name', class_name)
+                self.id_ = run.info.run_id
+                self._to_mlflow(tmp_dir)
             return run.info.run_id
 
     @abstractmethod
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         raise NotImplementedError("Subclasses must implement this method.")
 
     @abstractmethod
@@ -338,3 +344,27 @@ class MLFlowLoggedJob(BaseModel, ABC):
             logging.info(f"Deleted old run with ID: {old_id}")
 
         self.__refresh_cache()
+
+
+def load_job(run_id: str) -> MLFlowLoggedJob:
+    """
+    Load a job from MLFlow using its run ID.
+
+    Parameters
+    ----------
+    run_id : str
+        The run ID of the job to load.
+
+    Returns
+    -------
+    Job
+        The loaded job.
+    """
+    client = mlflow.MlflowClient()
+    run = client.get_run(run_id)
+    splitted_full_name = run.data.params['class_name'].split('.')
+    module_name, full_class_name = splitted_full_name[0], splitted_full_name[1:]
+    module = importlib.import_module(module_name)
+    for attr in full_class_name:
+        module = getattr(module, attr)
+    return module.from_mlflow_run_id(run_id)

@@ -4,6 +4,7 @@ import pandas as pd
 import subprocess
 import logging
 import duckdb
+import numpy as np
 
 from boosted_lorenzetti.dataset import aod
 
@@ -108,6 +109,15 @@ def test_aod_create_ringer_dataset(test_data_dir: Path,
         # Check if data table exists and has data
         df = con.execute("SELECT * FROM data LIMIT 1").pl()
         assert len(df) > 0, "Data table is empty or unreadable."
+
+        df = con.execute("SELECT DISTINCT(len(cl_rings)) as n_rings FROM data").df()
+        acceptable_numbers = [100, 18, 0]
+        strange_numbers = set()
+        for distinct in np.unique(df['n_rings']):
+            if distinct not in acceptable_numbers:
+                strange_numbers.add(distinct)
+
+        assert not strange_numbers, f"Unexpected number of rings: {strange_numbers}"
 
         # Check if sources table exists
         df_source = con.execute("SELECT * FROM sources").pl()

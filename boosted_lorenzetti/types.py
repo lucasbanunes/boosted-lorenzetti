@@ -65,14 +65,16 @@ BatchSizeType = Annotated[
 
 DIMS_DESCRIPTION = 'Dimensions of the model layers.'
 
-DimsType = Annotated[
+DimsOptionType = Annotated[
+    str,
+    typer.Option(help=DIMS_DESCRIPTION)
+]
+
+DimsFieldType = Annotated[
     List[int],
     Field(
         description=DIMS_DESCRIPTION
     ),
-    typer.Option(
-        help=DIMS_DESCRIPTION,
-    )
 ]
 
 ACTIVATION_DESCRIPTION = (
@@ -170,13 +172,12 @@ FOLD_DESCRTIPTION = (
     "Fold number for cross-validation."
 )
 
-FoldType = Annotated[
+FoldsType = Annotated[
     int,
     Field(
         description=FOLD_DESCRTIPTION
     ),
     typer.Option(
-        "--fold",
         help=FOLD_DESCRTIPTION,
     )
 ]
@@ -304,4 +305,66 @@ BestMetricModeType = Annotated[
         "--best-metric-mode",
         help=BEST_METRIC_MODE_DESCRIPTION,
     )
+]
+
+MONITOR_OPTION_FIELD_HELP = "Metric to monitor for early stopping and checkpointing."
+MonitorOptionField = Annotated[
+    str,
+    Field(
+        description=MONITOR_OPTION_FIELD_HELP,
+        example="val_max_sp"
+    ),
+    typer.Option(
+        help=MONITOR_OPTION_FIELD_HELP,
+    )
+]
+
+RUN_IDS_LIST_OPTION_TYPE_HELP = 'List of MLFlow run IDs to run'
+RunIdsListOptionType = Annotated[
+    str,
+    typer.Option(
+        help=RUN_IDS_LIST_OPTION_TYPE_HELP,
+    )
+]
+
+DB_PATH_OPTION_FIELD_HELP = "Path to the DuckDB database file."
+DbPathOptionField = Annotated[
+    Path,
+    Field(
+        description=DB_PATH_OPTION_FIELD_HELP,
+        example="data/database.duckdb"
+    ),
+    typer.Option(
+        help=DB_PATH_OPTION_FIELD_HELP,
+    )
+]
+
+
+LEARNING_RATE_OPTION_FIELD_HELP = "Learning rate for the optimizer."
+LearningRateOptionField = Annotated[
+    float,
+    Field(
+        description=LEARNING_RATE_OPTION_FIELD_HELP,
+        example=1e-3
+    ),
+    typer.Option(
+        help=LEARNING_RATE_OPTION_FIELD_HELP,
+    )
+]
+
+
+RING_COL_OPTION_FIELD_HELP = "Name of the column containing the ring data."
+RingColOptionField = Annotated[
+    str,
+    Field(description=RING_COL_OPTION_FIELD_HELP,
+          example="cl_rings"),
+    typer.Option(help=RING_COL_OPTION_FIELD_HELP)
+]
+
+TABLE_NAME_OPTION_FIELD_HELP = "Name of the DuckDB table containing the dataset."
+TableNameOptionField = Annotated[
+    str,
+    Field(description=TABLE_NAME_OPTION_FIELD_HELP,
+          example="data"),
+    typer.Option(help=TABLE_NAME_OPTION_FIELD_HELP)
 ]

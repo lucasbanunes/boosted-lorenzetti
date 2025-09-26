@@ -282,7 +282,7 @@ class KMeansTrainingJob(jobs.MLFlowLoggedJob):
         model_signature = infer_signature(sample_train_X, sample_train_y)
         return model_signature
 
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('train_query', self.train_query)
         mlflow.log_param('val_query', self.val_query)
@@ -669,7 +669,7 @@ class BestClusterNumberSearch(jobs.MLFlowLoggedJob):
             label_cols=self.label_cols
         )
 
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         mlflow.log_param('db_path', self.db_path)
         mlflow.log_param('train_query', self.train_query)
         mlflow.log_param('clusters', json.dumps(self.clusters))
@@ -878,7 +878,7 @@ class KFoldKMeansTrainingJob(jobs.MLFlowLoggedJob):
     def get_val_query(self, fold: int) -> str:
         return f"SELECT {', '.join(self.feature_cols)}, {self.label_col} FROM {self.table_name} WHERE {self.fold_col} = {fold};"
 
-    def _to_mlflow(self):
+    def _to_mlflow(self, tmp_dir: Path):
         mlflow.log_param("db_path", self.db_path)
         mlflow.log_param("table_name", self.table_name)
         mlflow.log_param("feature_cols", json.dumps(self.feature_cols))

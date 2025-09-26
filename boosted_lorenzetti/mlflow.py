@@ -196,3 +196,25 @@ def get_children(run_id: str,
         max_results=1000
     )
     return runs
+
+
+def load_model_from_checkpoint(run_id: str,
+                               artifact_path: str,
+                               model):
+    """
+    Load a model from an MLflow run checkpoint.
+
+    Parameters
+    ----------
+    run_id : str
+        The MLflow run ID.
+    artifact_path : str
+        The path to the model artifact in MLflow.
+
+    Returns
+    -------
+    Any
+        The loaded model.
+    """
+    with tmp_artifact_download(run_id, artifact_path) as tmp_path:
+        return model.load_from_checkpoint(str(tmp_path))

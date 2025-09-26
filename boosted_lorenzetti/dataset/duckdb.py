@@ -51,7 +51,6 @@ class DuckDBDataset(L.LightningDataModule):
         self.batch_size = batch_size
         self.cache = cache
         self.__clear_cache()
-        self.save_hyperparameters()
 
     def __clear_cache(self):
         self._train_X = None
@@ -241,10 +240,10 @@ class DuckDBDataset(L.LightningDataModule):
 
         dataset = torch.utils.data.TensorDataset(X, y)
 
-        return torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        return torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=(datatype == 'train'))
 
     def __get_mlflow_dataset(self, query: str, name: str | None = None):
-        X, y = self.get_df_from_query(query, limit=10)
+        X, y = self.get_df_from_query(query)
 
         # Casting to ensure mlflow knows how to log the dataset
         X = X.to_pandas(use_pyarrow_extension_array=True)
@@ -543,30 +542,30 @@ def add_kfold(
         random_state = seed_factory()
     with duckdb.connect(db_path) as conn:
         logging.info('Selecting data from database')
-        relation = conn.from_query(
-            f'SELECT {id_col}, {label_col} FROM {src_table};')
+        relation = conn.table(src_table)
         if filter_cond:
             relation = relation.filter(filter_cond)
+        relation = relation.select(f"{id_col}, {label_col}")
         label_df = relation.pl()
-        new_col = np.full(len(label_df), -1, dtype=np.int8)
-        kf = StratifiedKFold(
-            n_splits=n_folds, shuffle=shuffle, random_state=random_state)
-        x_placeholder = np.full(len(label_df), 0, dtype=np.int8)
-        logging.info('Creating KFold splits')
-        for fold, (_, val_idx) in enumerate(kf.split(x_placeholder, label_df[label_col].to_numpy())):
-            new_col[val_idx] = fold
-        label_df = label_df.with_columns(pl.Series(fold_col, new_col))
-        del new_col, x_placeholder
-        label_df.drop_in_place(label_col)
-        logging.info('Writing data to database')
+    new_col = np.full(len(label_df), -1, dtype=np.int8)
+    kf = StratifiedKFold(
+        n_splits=n_folds, shuffle=shuffle, random_state=random_state)
+    x_placeholder = np.full(len(label_df), 0, dtype=np.int8)
+    logging.info('Creating KFold splits')
+    with duckdb.connect(db_path) as conn:
+        conn.execute(f"ALTER TABLE {src_table} ADD COLUMN {fold_col} TINYINT DEFAULT -1;")
+    for fold, (_, val_idx) in enumerate(kf.split(x_placeholder, label_df[label_col].to_numpy())):
+        new_col[val_idx] = fold
+    label_df = label_df.with_columns(pl.Series(fold_col, new_col))
+    del new_col, x_placeholder
+    label_df.drop_in_place(label_col)
+    logging.info('Writing data to database')
+    with duckdb.connect(db_path) as conn:
         conn.execute(f"""
-            BEGIN TRANSACTION;
-            ALTER TABLE {src_table} ADD COLUMN {fold_col} TINYINT DEFAULT -1;
             UPDATE {src_table}
             SET {fold_col} = label_df.{fold_col}
             FROM label_df
             WHERE {src_table}.{id_col} = label_df.{id_col};
-            COMMIT;
         """)
 
 
@@ -618,29 +617,28 @@ def get_metadata(
 ) -> dict[str, Any]:
     if not check_table_exists(conn, table_name):
         raise ValueError(f"{table_name} table does not exist.")
-    metadata = conn.execute(f"SELECT * FROM {table_name} LIMIT 1;").df().iloc[0].to_dict()
+    metadata = conn.execute(
+        f"SELECT * FROM {table_name} LIMIT 1;").df().iloc[0].to_dict()
     return metadata
-
-
-CLASS_WEIGHTS_QUERY = """
-SELECT
-    {label_col},
-    COUNT({label_col}) as n_labels,
-    (SELECT (SELECT COUNT(*) FROM {table_name} WHERE {label_col} >=0)/COUNT(DISTINCT({label_col})) FROM {table_name} WHERE {label_col} >= 0)/n_labels as weights
-FROM {table_name}
-GROUP BY {label_col} HAVING {label_col} >= 0;"""
 
 
 def get_balanced_class_weights(
     conn: duckdb.DuckDBPyConnection,
     table_name: str,
     label_col: str,
+    filter: str | None = None
 ) -> list[float]:
     if not check_table_exists(conn, table_name):
         raise ValueError(f"{table_name} table does not exist.")
-    query = CLASS_WEIGHTS_QUERY.format(
-        table_name=table_name,
-        label_col=label_col
-    )
-    result = conn.execute(query).df().sort_values(by=label_col)['weights'].values
-    return result
+    if filter is None:
+        filter = ''
+    else:
+        filter = f'WHERE {filter}'
+    label_count = conn.execute(
+        f"SELECT {label_col} as label, COUNT({label_col}) as bincount FROM {table_name} {filter} GROUP BY {label_col};"
+    ).df().sort_values(by='label')
+    n_samples = label_count['bincount'].sum()
+    n_classes = len(label_count)
+    weights = [float(n_samples / (n_classes * count))
+               for count in label_count['bincount']]
+    return weights

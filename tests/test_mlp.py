@@ -1,11 +1,14 @@
-from boosted_lorenzetti.models import mlp
+from boosted_lorenzetti.mlp.cli import create_training, run_training, create_kfold, run_kfold
+from boosted_lorenzetti.mlp.jobs import KFoldTrainingJob
 from pathlib import Path
+import subprocess
+
 
 from boosted_lorenzetti.constants import N_RINGS
 
 
-def test_full_training(test_dataset_path: Path):
-    experiment_name = 'test_full_training'
+def test_mlp_full_training(test_dataset_path: Path):
+    experiment_name = 'test_mlp_full_training'
 
     ring_cols = [f'cl_rings[{i+1}]' for i in range(N_RINGS)]
     query_cols = ring_cols + ['label']
@@ -13,23 +16,23 @@ def test_full_training(test_dataset_path: Path):
     train_query = f"SELECT {query_cols_str} FROM data WHERE fold != 0;"
     val_query = f"SELECT {query_cols_str} FROM data WHERE fold = 0;"
 
-    run_id = mlp.create_training(
+    run_id = create_training(
         db_path=test_dataset_path,
         train_query=train_query,
         val_query=val_query,
         label_col='label',
-        dims=[N_RINGS, 1],
+        dims="100, 2, 1",
         experiment_name=experiment_name
     )
 
-    mlp.run_training(
+    run_training(
         run_ids=run_id,
         experiment_name=experiment_name,
     )
 
 
-def test_multiple_trainings(test_dataset_path: Path):
-    experiment_name = 'test_multiple_trainings'
+def test_mlp_multiple_trainings(test_dataset_path: Path, repo_path: Path):
+    experiment_name = 'test_mlp_multiple_trainings'
 
     ring_cols = [f'cl_rings[{i+1}]' for i in range(N_RINGS)]
     query_cols = ring_cols + ['label']
@@ -39,51 +42,83 @@ def test_multiple_trainings(test_dataset_path: Path):
 
     run_ids = []
     run_ids.append(
-        mlp.create_training(
+        create_training(
             db_path=test_dataset_path,
             train_query=train_query,
             val_query=val_query,
             label_col='label',
-            dims=[N_RINGS, 1],
+            dims="100, 2, 1",
             experiment_name=experiment_name
         )
     )
     run_ids.append(
-        mlp.create_training(
+        create_training(
             db_path=test_dataset_path,
             train_query=train_query,
             val_query=val_query,
             label_col='label',
-            dims=[N_RINGS, 1],
+            dims="100, 2, 1",
             experiment_name=experiment_name
         )
     )
 
-    mlp.run_training(
-        run_ids=run_ids,
-        experiment_name=experiment_name,
-    )
+    subprocess.run([
+        'python',
+        f'{str(repo_path)}/cli.py',
+        'mlp',
+        'run-training',
+        '--run-ids', ','.join(run_ids),
+        '--experiment-name', experiment_name
+    ])
 
 
-def test_kfold_training(test_dataset_path: Path):
-    experiment_name = 'test_kfold_training'
+def test_mlp_kfold_training(test_dataset_path: Path):
+    experiment_name = 'test_mlp_kfold_training'
 
-    run_id = mlp.create_kfold(
+    run_id = create_kfold(
         db_path=test_dataset_path,
+        ring_col='cl_rings',
         table_name='data',
-        dims=[N_RINGS, 1],
-        best_metric='val_max_sp',
+        dims="100, 2, 1",
+        best_metric='val.max_sp',
         best_metric_mode='max',
-        rings_col='cl_rings',
         label_col='label',
         fold_col='fold',
         folds=5,
         inits=1,
         experiment_name=experiment_name,
         max_epochs=2,
+        # n_jobs=2
     )
 
-    mlp.run_kfold(
+    run_kfold(
         run_id=run_id,
         experiment_name=experiment_name,
     )
+
+    loaded_job = KFoldTrainingJob.from_mlflow_run_id(run_id)
+    assert len(loaded_job.children) == 5 * 1, "Number of children does not match expected."
+    assert loaded_job.metrics is not None, "Metrics should not be None after training."
+    assert loaded_job.metrics_description is not None, "Metrics description should not be None after training."
+
+
+def test_mlp_create_kfold_cli(test_dataset_path: Path, repo_path: Path):
+    experiment_name = 'test_mlp_create_kfold_cli'
+
+    result = subprocess.run(['python',
+                             f'{str(repo_path)}/cli.py',
+                             'mlp',
+                             'create-kfold',
+                             '--db-path', str(test_dataset_path),
+                             '--ring-col', 'cl_rings',
+                             '--dims', "100, 2, 1",
+                             '--best-metric', 'val.max_sp',
+                             '--best-metric-mode', 'max',
+                             '--folds', '5',
+                             '--inits', '1',
+                             '--experiment-name', experiment_name,
+                             '--max-epochs', '2'],
+                            capture_output=True, text=True)
+    print("STDOUT: %s", result.stdout)
+    print("STDERR: %s", result.stderr)
+    assert "Created K-Fold training job with run ID:" in result.stdout, "K-Fold creation failed."

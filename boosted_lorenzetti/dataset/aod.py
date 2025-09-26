@@ -11,6 +11,7 @@ import logging
 
 
 from ..utils import open_directories
+from ..root import TREE_IO_ERROR_MSG
 from . import duckdb as bl_duckdb
 
 
@@ -595,6 +596,10 @@ def event_as_python(event):
     return new_data
 
 
+def check_file_integrity(file_path: str | Path) -> bool:
+    raise NotImplementedError("File integrity check not implemented yet.")
+
+
 app = typer.Typer(
     name='aod',
     help="AOD file conversion utilities",
@@ -619,12 +624,19 @@ def sample_generator(input_file: str | Path | Iterable[Path] | Iterable[str] | R
         Individual AOD events converted to Python dictionary format.
     """
     if not isinstance(input_file, ROOT.TChain):
-        chain = ROOT.TChain(ttree_name)
-        for file in open_directories(input_file, file_ext='root'):
-            chain.Add(str(file))
-    for event in chain:
-        logging.debug(f'Processing event {event.EventInfoContainer_Events[0].eventNumber}')
-        yield event_as_python(event)
+        for filepath in open_directories(input_file, file_ext='root'):
+            with ROOT.TFile(str(filepath)) as file:
+                tree = file[ttree_name]
+                try:
+                    for event in tree:
+                        yield event_as_python(event)
+                except RuntimeError as e:
+                    if str(e) == TREE_IO_ERROR_MSG:
+                        logging.error(f"Error opening file {file} or accessing TTree {ttree_name}: {e}")
+                        continue
+                    else:
+                        raise e
+
 
 
 def to_dict(input_file: str | Path | Iterable[Path] | Iterable[str] | ROOT.TChain,
@@ -1045,6 +1057,7 @@ CREATE TABLE data (
     cl_lambdaCenter FLOAT,
     cl_fracMax FLOAT,
     cl_lateralMom FLOAT,
+    label TINYINT NOT NULL
 );
 """
 
@@ -1089,7 +1102,8 @@ SELECT
     {db_name}.clusters.secondR as cl_secondR,
     {db_name}.clusters.lambdaCenter as cl_lambdaCenter,
     {db_name}.clusters.fracMax as cl_fracMax,
-    {db_name}.clusters.lateralMom as cl_lateralMom
+    {db_name}.clusters.lateralMom as cl_lateralMom,
+    {label} as label
 FROM {db_name}.events
     LEFT JOIN {db_name}.clusters ON {db_name}.events.id = {db_name}.clusters.event_id;
 """
@@ -1152,7 +1166,7 @@ def create_ringer_dataset(
             conn.execute(
                 f"ATTACH DATABASE '{input_db}' AS {metadata['name']};")
             formated_select_query = SELECT_RINGER_DATASET_DATA_TABLE_QUERY.format(
-                source_id=source_id, db_name=metadata['name'])
+                source_id=source_id, db_name=metadata['name'], label=label)
             conn.execute(f"INSERT INTO data BY NAME {formated_select_query};")
 
         bl_duckdb.add_metadata_table(conn,
