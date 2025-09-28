@@ -1,22 +1,22 @@
 name: boosted-lorenzetti-dev
 services:
-  lorenzetti:
-    image: ${DOCKER_USERNAME}/lorenzetti:${TAG}
-    container_name: lzt-container-${TAG}
-    volumes:
-      - ../:/root/workspaces/lorenzetti
-      - ~/logs:/root/logs
-      - ~/data:/root/data
-    ports:
-      - 8888:8888
-    tty: true
-    environment:
-    - LZT_DATA=${LZT_DATA}
-    - LZT_REPO=${LZT_REPO}
-    command: [
-      "sh", "-c",
-      "cd ~ && jupyter lab --ip 0.0.0.0 --port 8888 --allow-root --no-browser"
-    ]
+  # lorenzetti:
+  #   image: ${DOCKER_USERNAME}/lorenzetti:${TAG}
+  #   container_name: lzt-container-${TAG}
+  #   volumes:
+  #     - ../:/root/workspaces/lorenzetti
+  #     - ~/logs:/root/logs
+  #     - ~/data:/root/data
+  #   ports:
+  #     - 8888:8888
+  #   tty: true
+  #   environment:
+  #   - LZT_DATA=${LZT_DATA}
+  #   - LZT_REPO=${LZT_REPO}
+  #   command: [
+  #     "sh", "-c",
+  #     "cd ~ && jupyter lab --ip 0.0.0.0 --port 8888 --allow-root --no-browser"
+  #   ]
   boosted-lorenzetti:
     build:
       context: .

@@ -18,7 +18,7 @@ COPY requirements.txt requirements.txt
 RUN conda init && \
     conda config --set channel_priority strict && \
     conda create -c conda-forge --name dev root==6.34.04 python==3.11.13 && \
-    conda run -n dev pip install -r requirements.txt && \
+    conda run -n dev --live-stream pip install -r requirements.txt && \
     rm requirements.txt
 
 
