@@ -14,6 +14,7 @@ from boosted_lorenzetti.dataset.npz import app as npz_app
 
 from boosted_lorenzetti.utils import set_logger
 
+
 set_logger()
 logging.info(f'Is CUDA available? {torch.cuda.is_available()}')
 
