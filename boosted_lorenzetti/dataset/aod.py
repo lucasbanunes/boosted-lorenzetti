@@ -1104,8 +1104,8 @@ SELECT
     {db_name}.clusters.fracMax as cl_fracMax,
     {db_name}.clusters.lateralMom as cl_lateralMom,
     {label} as label
-FROM {db_name}.events
-    LEFT JOIN {db_name}.clusters ON {db_name}.events.id = {db_name}.clusters.event_id;
+FROM {db_name}.clusters
+    INNER JOIN {db_name}.events ON {db_name}.clusters.event_id = {db_name}.events.id;
 """
 
 
