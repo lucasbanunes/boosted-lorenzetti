@@ -8,7 +8,7 @@
 
 # Usage
 # $ sbatch create_dataset.sh <img>
-# $ sbatch create_dataset.sh boosted-lorenzetti_0.1.0.sif
+# $ sbatch create_dataset.sh boosted-lorenzetti_latest.sif
 
 img=$1
 command="conda run -n dev --live-stream"

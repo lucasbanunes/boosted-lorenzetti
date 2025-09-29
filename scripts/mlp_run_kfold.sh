@@ -8,7 +8,7 @@
 
 # Usage
 # $ sbatch mlp_run_kfold.sh <kfold-run-id> <tracking-uri> <img>
-# $ sbatch mlp_run_kfold.sh 4978c033d2864d1e8bafb1d9bea3841f /home/test.user/mlruns boosted-lorenzetti_0.1.0.sif
+# $ sbatch mlp_run_kfold.sh 4978c033d2864d1e8bafb1d9bea3841f /home/test.user/mlruns boosted-lorenzetti_latest.sif
 
 kfold_run_id=$1
 tracking_uri=$2

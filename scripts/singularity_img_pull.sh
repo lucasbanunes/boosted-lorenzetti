@@ -1,9 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=img-pull
+#SBATCH --job-name=singularity-img-pull
 #SBATCH -o /home/lucas.nunes/logs/%x-%j.out
-#SBATCH --partition=cpu
 
-# Launches dev environment
 # Usage
 # $ sbatch submit_jobs.sh <image-uri>
 

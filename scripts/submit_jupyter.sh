@@ -6,7 +6,7 @@
 
 # Usage
 # $ sbatch run_mlflow_ui.sh <img> <mlruns-path> <port>
-# $ sbatch run_mlflow_ui.sh boosted-lorenzetti_0.1.0.sif /home/test.user/mlruns 5000
+# $ sbatch run_mlflow_ui.sh boosted-lorenzetti_latest.sif /home/test.user/mlruns 5000
 
 img=$1
 port=$2

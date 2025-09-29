@@ -8,7 +8,7 @@
 
 # Usage
 # $ sbatch mlp_create_kfold.sh <img> <db-path> <tracking-uri> <checkpoints-dir>
-# $ sbatch mlp_create_kfold.sh boosted-lorenzetti_0.1.0.sif /home/test.user/lorenzetti.db /home/test.user/mlruns checkpoints
+# $ sbatch mlp_create_kfold.sh boosted-lorenzetti_latest.sif /home/test.user/lorenzetti.db /home/test.user/mlruns checkpoints
 
 img=$1
 db_path=$2

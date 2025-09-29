@@ -10,8 +10,8 @@
 # Usage
 # $ sbatch singularity_lzt.sh <command>
 
-echo "Running command: ${@} on boosted-lorenzetti_0.1.0.sif"
+echo "Running command: ${@} on boosted-lorenzetti_latest.sif"
 singularity exec \
 --nv \
 --bind /mnt/cern_data:/mnt/cern_data \
-$SIF_IMGS_DIR/boosted-lorenzetti_0.1.0.sif "${@}"
+$SIF_IMGS_DIR/boosted-lorenzetti_latest.sif "${@}"
