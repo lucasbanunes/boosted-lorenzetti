@@ -553,7 +553,7 @@ def add_kfold(
     x_placeholder = np.full(len(label_df), 0, dtype=np.int8)
     logging.info('Creating KFold splits')
     with duckdb.connect(db_path) as conn:
-        conn.execute(f"ALTER TABLE {src_table} ADD COLUMN {fold_col} TINYINT DEFAULT -1;")
+        conn.execute(f"ALTER TABLE {src_table} ADD COLUMN {fold_col} TINYINT DEFAULT NULL;")
     for fold, (_, val_idx) in enumerate(kf.split(x_placeholder, label_df[label_col].to_numpy())):
         new_col[val_idx] = fold
     label_df = label_df.with_columns(pl.Series(fold_col, new_col))
