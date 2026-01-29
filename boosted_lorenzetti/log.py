@@ -43,3 +43,8 @@ def set_logger(
         }
     logging.config.dictConfig(config)
     return logging.getLogger(name)
+
+
+def get_logger(name: str = 'root') -> logging.Logger:
+    """Get the logger for the application."""
+    return logging.getLogger(name)

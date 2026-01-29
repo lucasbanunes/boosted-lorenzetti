@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Mapping
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 import pandas as pd
 import numpy as np
 import pandera.pandas as pa
@@ -15,13 +15,13 @@ class L1Info(BaseModel):
         Field(
             description="The name of the L1 eta coordinates column."
         )
-    ]
+    ] = 'trig_L1_eta'
     phi_col: Annotated[
         str,
         Field(
             description="The name of the L1 phi coordinates column."
         )
-    ]
+    ] = 'trig_L1_phi'
 
 
 class L2Info(BaseModel):
@@ -107,7 +107,7 @@ CUT_MAP_DF_SCHEMA_DICT = {
     'et_max': pa.Column(pa.Float, nullable=False),
     'eta_min': pa.Column(pa.Float, nullable=False),
     'eta_max': pa.Column(pa.Float, nullable=False),
-    'erahad_ettio': pa.Column(pa.Float, nullable=False),
+    'had_et': pa.Column(pa.Float, nullable=False),
     'eratio': pa.Column(pa.Float, nullable=False),
     'rcore': pa.Column(pa.Float, nullable=False),
 }
@@ -117,11 +117,13 @@ for col in CUT_MAP_DEFAULT_COLS.keys():
                                             required=False)
 
 
-class CutMap(BaseModel):
+class ElectronCutMap(BaseModel):
 
     DEFAULT_COLS: ClassVar[dict[str, float]] = CUT_MAP_DEFAULT_COLS
-    DF_SCHEMA: ClassVar[pa.DataFrameModel] = pa.DataFrameModel(
+    DF_SCHEMA: ClassVar[pa.DataFrameSchema] = pa.DataFrameSchema(
         CUT_MAP_DF_SCHEMA_DICT)
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     deta: Annotated[
         float,
@@ -137,30 +139,39 @@ class CutMap(BaseModel):
             ge=0.0
         )
     ] = 0.1
-    df: Annotated[
-        Path | pd.DataFrame,
+    cuts: Annotated[
+        Path | str | pd.DataFrame,
         Field(
-            description='Dataframe with the cut value. Can be a csv file path.'
+            description='Dataframe with the cut value. Can be a csv file path or the name of one of the predefined cutmaps in the "cutmaps" dir.',
+            repr=False
         )
     ]
 
+    def read_csv(self, filepath: Path) -> pd.DataFrame:
+        return pd.read_csv(filepath, dtype=float)
+
     def model_post_init(self, context):
-        if isinstance(self.df, Path):
-            self.df = pd.read_csv(self.df)
 
-        self.DF_SCHEMA.validate(self.df)
+        if isinstance(self.cuts, str):
+            cutmapdir = Path(__file__).parent / 'cutmaps'
+            self.cuts = self.read_csv(cutmapdir / f'electron_{self.cuts}.csv')
 
-        self.df['et_interval'] = self.df.apply(
+        if isinstance(self.cuts, Path):
+            self.cuts = self.read_csv(self.cuts)
+
+        self.DF_SCHEMA.validate(self.cuts)
+
+        self.cuts['et_interval'] = self.cuts.apply(
             lambda row: pd.Interval(
                 left=row['et_min'], right=row['et_max'], closed='left'),
             axis=1
         )
-        self.df['eta_interval'] = self.df.apply(
+        self.cuts['eta_interval'] = self.cuts.apply(
             lambda row: pd.Interval(
                 left=row['eta_min'], right=row['eta_max'], closed='left'),
             axis=1
         )
-        self.df = self.df.drop(
+        self.cuts = self.cuts.drop(
             ['et_min', 'et_max', 'eta_min', 'eta_max'],
             axis=1
         ).set_index(
@@ -168,23 +179,23 @@ class CutMap(BaseModel):
         )
 
         for col, default_val in self.DEFAULT_COLS.items():
-            if col not in self.df.columns:
-                self.df[col] = default_val
+            if col not in self.cuts.columns:
+                self.cuts[col] = default_val
 
     @classmethod
-    def from_yaml(cls, path: str) -> "CutMap":
+    def from_yaml(cls, path: str) -> "ElectronCutMap":
         import yaml
         with open(path, 'r') as f:
             data = yaml.safe_load(f)
         return cls(**data)
 
     def get_sample_map(self, et: float, abs_eta: float) -> pd.Series:
-        return self.df.loc[(et, abs_eta)]
+        return self.cuts.loc[(et, abs_eta)]
 
     @computed_field
     @property
     def max_eta_bin(self) -> np.floating:
-        return self.df.index.get_level_values(1).right.max()
+        return self.cuts.index.get_level_values(1).right.max()
 
 
 VALID_PID_NAMES = (
@@ -239,32 +250,44 @@ class CaloSampling(object):
     MINIFCAL3 = 27
 
 
-class CutBasedModel(BaseModel):
+class ElectronCutBasedModel(BaseModel):
 
     l1: Annotated[
         L1Info,
         Field(
             description="The L1 column information."
         )
-    ]
+    ] = L1Info()
     l2: Annotated[
         L2Info,
         Field(
             description="The L2 column information."
         )
-    ]
+    ] = L2Info()
     cut_map: Annotated[
-        CutMap,
+        ElectronCutMap,
         Field(
             description="The cut map to be applied."
         )
     ]
+    classification_col_name: Annotated[
+        str,
+        Field(
+            description="The name of the output classification column."
+        )
+    ] = 'cutbased'
+    reason_col_name: Annotated[
+        str,
+        Field(
+            description="The name of the output reason column."
+        )
+    ] = 'cutbased_reason'
 
     def get_f1(self, data: Mapping[str, float]) -> float:
         energy_sample = data[self.l2.energy_sample_col]
         if abs(sum(energy_sample)) > 0.00001:
             f1 = (energy_sample[CaloSampling.EMB1] +
-                  energy_sample[CaloSampling.EME1]) / float(energy_sample)
+                  energy_sample[CaloSampling.EME1]) / sum(energy_sample)
         else:
             f1 = -1
 
@@ -291,20 +314,20 @@ class CutBasedModel(BaseModel):
         eratio = eratio_numerator / eratio_denominator if eratio_denominator != 0 else -1
         return eratio
 
-    def __call__(self, data: Mapping[str, float], return_reason: bool = False) -> dict[str, Any]:
+    def apply_cut(self, data: Mapping[str, float], return_reason: bool = False) -> dict[str, Any]:
         result = {
-            'classification': -1,
+            self.classification_col_name: -1,
         }
-        if abs(data[self.l1.eta_col]) > self.VALID_L1_ETA_MAX:
-            result['classification'] = 0
+        if abs(data[self.l1.eta_col]) > self.l1.VALID_L1_ETA_MAX:
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'invalid_l1_eta'
+                result[self.reason_col_name] = 'invalid_l1_eta'
             return result
 
-        if (data[self.l2.eta_col] - data[self.l1.eta_col]).abs() > self.cut_map.deta:
-            result['classification'] = 0
+        if abs(data[self.l2.eta_col] - data[self.l1.eta_col]) > self.cut_map.deta:
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'deta_too_big'
+                result[self.reason_col_name] = 'deta_too_big'
             return result
 
         l1_phi = data[self.l1.phi_col]
@@ -314,16 +337,16 @@ class CutBasedModel(BaseModel):
         if dphi > np.pi:
             dphi = 2 * np.pi - dphi
         if dphi > self.cut_map.dphi:
-            result['classification'] = 0
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'dphi_too_big'
+                result[self.reason_col_name] = 'dphi_too_big'
             return result
 
         l2_abs_eta = abs(data[self.l2.eta_col])
         if l2_abs_eta > self.cut_map.max_eta_bin:
-            result['classification'] = 0
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'invalid_l2_eta'
+                result[self.reason_col_name] = 'invalid_l2_eta'
             return result
 
         sample_cut_map = self.cut_map.get_sample_map(
@@ -336,27 +359,27 @@ class CutBasedModel(BaseModel):
         else:
             rcore = data[self.l2.e237_col] / data[self.l2.e277_col]
         if rcore < sample_cut_map.rcore:
-            result['classification'] = 0
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'rcore_too_small'
+                result[self.reason_col_name] = 'rcore_too_small'
             return result
 
-        eratio = self.get_eratio()
+        eratio = self.get_eratio(data)
         in_crack = l2_abs_eta > 2.37 or (1.37 < l2_abs_eta < 1.52)
         low_f1 = self.get_f1(data) < sample_cut_map.f1
         if not (in_crack or low_f1) and eratio < sample_cut_map.eratio:
-            result['classification'] = 0
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'eratio_too_small'
+                result[self.reason_col_name] = 'eratio_too_small'
             return result
 
         if in_crack:
             eratio = -1
 
         if data[self.l2.et_col]*1e-3 < sample_cut_map.et:
-            result['classification'] = 0
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'et_too_small'
+                result[self.reason_col_name] = 'et_too_small'
             return result
 
         if data[self.l2.et_col] > sample_cut_map.et2:
@@ -366,35 +389,35 @@ class CutBasedModel(BaseModel):
         had_et = data[self.l2.et_col] - data[self.l2.e277_col]
         had_et = had_et / np.cosh(l2_abs_eta)
         if had_et > hadet_thr:
-            result['classification'] = 0
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'had_et_too_big'
+                result[self.reason_col_name] = 'had_et_too_big'
             return result
 
         if data[self.l2.weta2_col] > sample_cut_map.weta2:
-            result['classification'] = 0
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'weta2_too_big'
+                result[self.reason_col_name] = 'weta2_too_big'
             return result
 
         if data[self.l2.wstot_col] >= sample_cut_map.wstot:
-            result['classification'] = 0
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'wstot_too_big'
+                result[self.reason_col_name] = 'wstot_too_big'
             return result
 
         if self.get_f3(data) > sample_cut_map.f3:
-            result['classification'] = 0
+            result[self.classification_col_name] = 0
             if return_reason:
-                result['reason'] = 'f3_too_big'
+                result[self.reason_col_name] = 'f3_too_big'
             return result
 
-        result['classification'] = 1
+        result[self.classification_col_name] = 1
         if return_reason:
-            result['reason'] = ''
+            result[self.reason_col_name] = ''
 
         return result
 
-    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        results = data.apply(self, axis=1, result_type='expand')
+    def predict(self, data: pd.DataFrame, return_reason: bool = False) -> pd.DataFrame:
+        results = data.apply(self.apply_cut, axis=1, result_type='expand', return_reason=return_reason)
         return results

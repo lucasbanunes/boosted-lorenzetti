@@ -3,6 +3,7 @@ import logging
 import torch
 
 from boosted_lorenzetti.dataset.aod import app as aod_app
+from boosted_lorenzetti.cutbased.cli import app as cutbased_app
 from boosted_lorenzetti.deeponet.cli import app as deeponet_app
 from boosted_lorenzetti.dataset.duckdb import app as duckdb_app
 from boosted_lorenzetti.kan.cli import app as kan_app
@@ -23,6 +24,7 @@ app = typer.Typer(
     help='CLI utilities for boosted-lorenzetti'
 )
 app.add_typer(aod_app)
+app.add_typer(cutbased_app)
 app.add_typer(duckdb_app)
 app.add_typer(deeponet_app)
 app.add_typer(kan_app)

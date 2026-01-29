@@ -5,6 +5,14 @@ from typing import Annotated, List
 from pathlib import Path
 
 
+DevType = Annotated[
+    bool,
+    Field(
+        description="If True, runs in development mode with limited data for faster execution."
+    )
+]
+
+
 def seed_factory() -> int:
     return np.random.randint(np.iinfo(np.int32).max - 10)
 

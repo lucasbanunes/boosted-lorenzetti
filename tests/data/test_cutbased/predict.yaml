@@ -1,0 +1,55 @@
+dataset_path: /home/lucasbanunes/workspaces/lorenzetti/boosted-lorenzetti/tests/data/test_cutbased/test_parquet.parquet
+dev: true
+models:
+  loose:
+    cut_map:
+      cuts: loose
+    l1:
+      eta_col: trig_L1eFex_el_eta
+      phi_col: trig_L1eFex_el_phi
+  vloose:
+    cut_map:
+      cuts: vloose
+    l1:
+      eta_col: trig_L1eFex_el_eta
+      phi_col: trig_L1eFex_el_phi
+  lhvloose:
+    cut_map:
+      cuts: lhvloose
+    l1:
+      eta_col: trig_L1eFex_el_eta
+      phi_col: trig_L1eFex_el_phi
+  lhloose:
+    cut_map:
+      cuts: lhloose
+    l1:
+      eta_col: trig_L1eFex_el_eta
+      phi_col: trig_L1eFex_el_phi
+  medium:
+    cut_map:
+      cuts: medium
+    l1:
+      eta_col: trig_L1eFex_el_eta
+      phi_col: trig_L1eFex_el_phi
+  lhmedium:
+    cut_map:
+      cuts: lhmedium
+    l1:
+      eta_col: trig_L1eFex_el_eta
+      phi_col: trig_L1eFex_el_phi
+  tight:
+    cut_map:
+      cuts: tight
+    l1:
+      eta_col: trig_L1eFex_el_eta
+      phi_col: trig_L1eFex_el_phi
+  lhtight:
+    cut_map:
+      cuts: lhtight
+    l1:
+      eta_col: trig_L1eFex_el_eta
+      phi_col: trig_L1eFex_el_phi
+output:
+  path: /home/lucasbanunes/workspaces/lorenzetti/boosted-lorenzetti/tests/data/test_cutbased/predict_output.parquet
+  concat: true
+n_jobs: -1
